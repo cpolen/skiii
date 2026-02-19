@@ -1,5 +1,5 @@
 {
-  "name": "skiii-temp",
+  "name": "skiii",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,17 +9,29 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@tanstack/query-persist-client-core": "^5.91.19",
+    "@tanstack/query-sync-storage-persister": "^5.90.22",
+    "@tanstack/react-query": "^5.90.21",
+    "dompurify": "^3.3.1",
+    "localforage": "^1.10.0",
+    "mapbox-gl": "^3.18.1",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "recharts": "^3.7.0",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/dompurify": "^3.0.5",
+    "@types/mapbox-gl": "^3.4.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "prettier": "^3.8.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
