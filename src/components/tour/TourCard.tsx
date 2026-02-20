@@ -73,6 +73,15 @@ export const TourCard = memo(function TourCard({
               {diff.label}
             </span>
           )}
+          {ates && (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${ates.color}`}
+              title="Avalanche Terrain Exposure Scale — Simple: minimal avy terrain. Challenging: well-defined avy paths. Complex: multiple overlapping avy paths."
+              aria-label={`${ates.label} — Avalanche Terrain Exposure Scale`}
+            >
+              {ates.label}
+            </span>
+          )}
         </div>
       </div>
 
@@ -129,17 +138,6 @@ export const TourCard = memo(function TourCard({
         <div className="mt-1.5 rounded bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700">
           {conditions.reasons[0]}
         </div>
-      )}
-
-      {/* ATES badge */}
-      {ates && (
-        <span
-          className={`mt-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${ates.color}`}
-          title="Avalanche Terrain Exposure Scale — Simple: minimal avy terrain. Challenging: well-defined avy paths. Complex: multiple overlapping avy paths."
-          aria-label={`${ates.label} — Avalanche Terrain Exposure Scale`}
-        >
-          {ates.label}
-        </span>
       )}
 
       {/* Expanded view shows more detail */}

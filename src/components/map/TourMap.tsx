@@ -26,6 +26,19 @@ const DIFFICULTY_COLORS: Record<string, string> = {
   expert: '#ED1C24',
 };
 
+/** Bounding box that contains all tour marker positions. */
+function getTourMarkerBounds(): mapboxgl.LngLatBounds {
+  const bounds = new mapboxgl.LngLatBounds();
+  for (const tour of tours) {
+    const firstCoord = tour.variants[0]?.route.geometry.coordinates[0] as
+      | [number, number]
+      | undefined;
+    const [lng, lat] = firstCoord ?? tour.trailhead.geometry.coordinates;
+    bounds.extend([lng, lat]);
+  }
+  return bounds;
+}
+
 /** Build a GeoJSON FeatureCollection from tour trailheads.
  *  Uses the first coordinate of the primary route as the marker position
  *  so it always matches the route start, falling back to the trailhead field.
@@ -210,21 +223,29 @@ export function TourMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fly back to overview when deselecting a tour
+  // Fit all tour markers in the visible area when no tour is selected.
+  // On mobile the bottom sheet covers ~45% of the viewport, so we use heavy
+  // bottom padding so markers sit above the drawer.
   const prevSlugRef = useRef<string | null>(null);
   useEffect(() => {
     const wasSelected = prevSlugRef.current;
     prevSlugRef.current = selectedTourSlug;
-    if (wasSelected && !selectedTourSlug && mapRef.current) {
-      mapRef.current.flyTo({
-        center: [-120.0324, 39.0968], // TAHOE_CENTER
-        zoom: 9.5, // DEFAULT_ZOOM
+
+    if (!selectedTourSlug && mapRef.current) {
+      const isMobile = window.innerWidth < 768;
+      const animate = !!wasSelected;
+
+      mapRef.current.fitBounds(getTourMarkerBounds(), {
+        padding: isMobile
+          ? { top: 60, bottom: Math.round(window.innerHeight * 0.48), left: 20, right: 20 }
+          : { top: 40, bottom: 40, left: 40, right: 40 },
         pitch: show3DTerrain ? 60 : 0,
         bearing: 0,
-        duration: 1000,
+        maxZoom: 10,
+        duration: animate ? 1000 : 0,
       });
     }
-  }, [selectedTourSlug, show3DTerrain]);
+  }, [selectedTourSlug, show3DTerrain, mapReady]);
 
   // Refs so the styledata handler always reads fresh values (no stale closures)
   const topSlugsRef = useRef<string[]>([]);

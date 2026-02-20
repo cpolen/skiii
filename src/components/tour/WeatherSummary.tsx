@@ -113,7 +113,7 @@ export function WeatherSummary({ tour, compact }: { tour: Tour; compact?: boolea
       </div>
 
       {/* Detail grid */}
-      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
+      <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1.5">
         <WeatherStat
           label="Wind"
           value={`${windDir} ${windMph} mph`}

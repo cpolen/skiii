@@ -330,12 +330,16 @@ function DetailShareButton({ tourName }: { tourName: string }) {
 
   const handleShare = async () => {
     const url = window.location.href;
-    if (navigator.share) {
-      await navigator.share({ title: `Skiii: ${tourName}`, url });
-    } else {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Skiii: ${tourName}`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    } catch {
+      // User canceled share dialog — not an error
     }
   };
 

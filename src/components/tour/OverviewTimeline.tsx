@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import type { WeatherForecast } from '@/lib/types/conditions';
-import { metersToFeet } from '@/lib/types/conditions';
+import { metersToFeet, celsiusToFahrenheit, kmhToMph } from '@/lib/types/conditions';
 import type { Tour } from '@/lib/types/tour';
 import { assessHour } from '@/lib/analysis/timing';
 
@@ -29,6 +29,14 @@ function formatHourLabel(iso: string): string {
   if (h === 12) return '12 PM';
   return h < 12 ? `${h} AM` : `${h - 12} PM`;
 }
+
+/** Width of each hour cell in the mobile scrollable timeline (px).
+ *  ~15px fits a full 24-hour day on a typical phone screen (~375px). */
+const CELL_W = 15;
+/** Gap between cells (matches `gap-px` = 1px). */
+const CELL_GAP = 1;
+/** Total stride per cell (width + gap) for scroll position math. */
+const CELL_STRIDE = CELL_W + CELL_GAP;
 
 interface OverviewTimelineProps {
   forecast: WeatherForecast;
@@ -82,105 +90,270 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }:
     return labels;
   }, [hours]);
 
-  // Mobile day tab state
-  const [activeDay, setActiveDay] = useState(0);
-
   // Selected hour time label
   const selectedLabel = selectedHour != null && hours[selectedHour]
     ? `${getDayLabel(hours[selectedHour].time)} ${formatHourLabel(hours[selectedHour].time)}`
     : null;
 
-  // Best consecutive favorable daytime window
-  const bestWindow = useMemo(() => {
-    let bestStart = -1;
-    let bestLen = 0;
-    let curStart = -1;
-    let curLen = 0;
-    for (let i = 0; i < hours.length; i++) {
+  // Next favorable daytime window at or after now
+  const nextWindow = useMemo(() => {
+    let i = nowIndex;
+    while (i < hours.length) {
       if (hours[i].isDay && hours[i].favorability === 'more') {
-        if (curStart === -1) curStart = i;
-        curLen++;
-        if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; }
+        const start = i;
+        while (i < hours.length && hours[i].isDay && hours[i].favorability === 'more') i++;
+        const len = i - start;
+        if (len >= 2) {
+          const startLabel = `${getDayLabel(hours[start].time)} ${formatHourLabel(hours[start].time)}`;
+          const endLabel = formatHourLabel(hours[start + len - 1].time);
+          return { label: `${startLabel} – ${endLabel}`, startIndex: start };
+        }
       } else {
-        curStart = -1; curLen = 0;
+        i++;
       }
     }
-    if (bestStart === -1 || bestLen < 2) return null;
-    const startLabel = `${getDayLabel(hours[bestStart].time)} ${formatHourLabel(hours[bestStart].time)}`;
-    const endLabel = formatHourLabel(hours[bestStart + bestLen - 1].time);
-    return `${startLabel} – ${endLabel} (${bestLen}h)`;
-  }, [hours]);
+    return null;
+  }, [hours, nowIndex]);
+
+  // --- Mobile scrollable timeline state ---
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [centerIndex, setCenterIndex] = useState(nowIndex);
+  const [committed, setCommitted] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipCommitRef = useRef(false);
+
+  // On mount, scroll to the selected hour (if any) or "now".
+  // The leading spacer is (50% - CELL_W/2), so scrollLeft = index * CELL_STRIDE centers that cell.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Skip the commit that this programmatic scroll would trigger —
+    // we don't want to change selectedForecastHour from null on mount,
+    // because that would cancel the in-flight "now" grid data fetch.
+    skipCommitRef.current = true;
+    const target = selectedHour != null ? selectedHour : nowIndex;
+    // Use rAF to ensure children are laid out before setting scroll position
+    requestAnimationFrame(() => {
+      el.scrollLeft = target * CELL_STRIDE;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track the last hour the timeline itself committed, so we can distinguish
+  // external selectedHour changes from our own commits.
+  const lastCommittedHourRef = useRef<number | null>(selectedHour);
+
+  // When selectedHour changes externally (e.g. Corn/Powder pill), scroll to it.
+  useEffect(() => {
+    if (selectedHour === lastCommittedHourRef.current) return;
+    lastCommittedHourRef.current = selectedHour;
+    const el = scrollRef.current;
+    if (!el) return;
+    const target = selectedHour != null ? selectedHour : nowIndex;
+    skipCommitRef.current = true;
+    el.scrollTo({ left: target * CELL_STRIDE, behavior: 'smooth' });
+    setCenterIndex(target);
+    setCommitted(true);
+    setTimeout(() => setCommitted(false), 300);
+  }, [selectedHour, nowIndex]);
+
+  // Keep a ref to onSelectHour so callbacks always call the latest version
+  const onSelectHourRef = useRef(onSelectHour);
+  onSelectHourRef.current = onSelectHour;
+
+  // Commit: snap to nearest cell, update Zustand store, trigger pulse
+  const commitSelection = useCallback(() => {
+    if (skipCommitRef.current) { skipCommitRef.current = false; return; }
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = Math.max(0, Math.min(hours.length - 1, Math.round(el.scrollLeft / CELL_STRIDE)));
+    el.scrollLeft = idx * CELL_STRIDE; // snap to exact cell boundary
+    setCenterIndex(idx);
+    lastCommittedHourRef.current = idx;
+    onSelectHourRef.current(idx);
+    setCommitted(true);
+    setTimeout(() => setCommitted(false), 300);
+  }, [hours.length]);
+
+  // Scroll handler: update label immediately, schedule commit via debounce fallback
+  const onTimelineScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = Math.max(0, Math.min(hours.length - 1, Math.round(el.scrollLeft / CELL_STRIDE)));
+    setCenterIndex(idx);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(commitSelection, 350);
+  };
+
+  // scrollend listener: authoritative commit when the browser confirms scroll finished.
+  // React has no onScrollEnd prop, so we use addEventListener directly.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScrollEnd = () => {
+      // Cancel pending debounce — scrollend is authoritative
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      commitSelection();
+    };
+    el.addEventListener('scrollend', handleScrollEnd);
+    return () => el.removeEventListener('scrollend', handleScrollEnd);
+  }, [commitSelection]);
+
+  // The prominent label shown above the scrollable strip
+  const centerHour = hours[centerIndex];
+  const centerLabel = centerHour
+    ? `${getDayLabel(centerHour.time)}, ${formatHourLabel(centerHour.time)}`
+    : '';
 
   return (
-    <div className="mb-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-gray-100">
-      {/* Header */}
-      <div className="mb-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-          72-Hour Conditions
-        </p>
-      </div>
-
-      {/* Day tabs for mobile */}
-      <div className="flex gap-1 mb-2 md:hidden">
-        {dayLabels.map((dl, idx) => (
-          <button
-            key={dl.index}
-            onClick={() => setActiveDay(idx)}
-            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium ${
-              activeDay === idx ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
-            }`}
-            aria-label={`Show ${dl.label} forecast`}
-          >
-            {dl.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Full 72-bar view for desktop */}
-      <div className="hidden md:flex gap-px">
-        {hours.map((h) => {
-          const isPast = h.index < nowIndex;
-          const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
-          const isSelected = selectedHour === h.index;
-          const isNow = h.index === nowIndex;
-
-          return (
+    <div className="md:mb-2 md:rounded-xl md:bg-white md:p-3 md:shadow-sm md:ring-1 md:ring-gray-100">
+      {/* ===== MOBILE: scrollable timeline ===== */}
+      <div className="md:hidden">
+        {/* Status row: current time (left) + context or next window (right) */}
+        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+          <p className="text-sm font-semibold text-gray-900">{centerLabel}</p>
+          {selectedLabel ? (
+            <p className="text-[11px] font-medium text-blue-700">Conditions for {selectedLabel}</p>
+          ) : nextWindow ? (
             <button
-              key={h.index}
-              onClick={() => onSelectHour(h.index)}
-              className="relative flex-1 transition-transform hover:scale-y-110"
-              style={{ height: 24 }}
-              aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
-              title={`${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
+              onClick={() => {
+                onSelectHour(nextWindow.startIndex);
+                setCenterIndex(nextWindow.startIndex);
+                const el = scrollRef.current;
+                if (el) el.scrollTo({ left: nextWindow.startIndex * CELL_STRIDE, behavior: 'smooth' });
+              }}
+              className="text-[11px] text-green-700"
             >
-              <div
-                className={`h-full w-full rounded-[1px] transition-all duration-150 ${
-                  isSelected ? 'scale-y-125 ring-2 ring-blue-500' : ''
-                }`}
-                style={{
-                  backgroundColor: color,
-                  opacity: isSelected ? 1 : isPast ? 0.5 : 0.6,
-                }}
-              />
-              {isNow && (
-                <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 text-[7px] leading-none text-red-500">
-                  ▼
-                </div>
-              )}
+              Next window: <span className="font-medium underline">{nextWindow.label}</span>
             </button>
-          );
-        })}
+          ) : null}
+        </div>
+
+        {/* Scrollable bar strip with center indicator */}
+        <div className="relative timeline-fade">
+          {/* Center indicator with triangles */}
+          <div className={`pointer-events-none absolute -top-2 -bottom-2 left-1/2 z-10 -translate-x-1/2 flex flex-col items-center transition-opacity duration-300 ${committed ? 'opacity-100' : 'opacity-80'}`}>
+            <div className="text-[10px] leading-none text-red-500">&#9660;</div>
+            <div className="flex-1 w-[2px] bg-red-500 rounded-full shadow-[0_0_4px_rgba(239,68,68,0.5)]" />
+            <div className="text-[10px] leading-none text-red-500">&#9650;</div>
+          </div>
+
+          <div
+            ref={scrollRef}
+            onScroll={onTimelineScroll}
+            className="flex gap-px overflow-x-auto scrollbar-hide"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' }}
+          >
+            {/* Leading spacer so the first cell can be centered */}
+            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2}px)` }} />
+
+            {hours.map((h) => {
+              const isPast = h.index < nowIndex;
+              const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
+              const isSelected = selectedHour === h.index;
+              const isNow = h.index === nowIndex;
+              const isDayStart = dayLabels.some((dl) => dl.index === h.index);
+
+              return (
+                <button
+                  key={h.index}
+                  onClick={() => {
+                    onSelectHour(h.index);
+                    setCenterIndex(h.index);
+                    const el = scrollRef.current;
+                    if (el) el.scrollTo({ left: h.index * CELL_STRIDE, behavior: 'smooth' });
+                  }}
+                  className={`relative shrink-0 ${isDayStart && h.index > 0 ? 'ml-1' : ''}`}
+                  style={{ width: CELL_W, height: 28 }}
+                  aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
+                >
+                  <div
+                    className={`h-full rounded-[2px] ${
+                      isSelected ? 'ring-1.5 ring-blue-500' : ''
+                    }`}
+                    style={{
+                      backgroundColor: color,
+                      opacity: isSelected ? 1 : isPast ? 0.4 : 0.65,
+                    }}
+                  />
+                  {isNow && (
+                    <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 text-[7px] leading-none text-red-500">
+                      ▼
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+
+            {/* Trailing spacer so the last cell can be centered */}
+            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2}px)` }} />
+          </div>
+        </div>
+
+        {/* Below strip: Reset (left) + legend (center) + weather (right) */}
+        <div className="mt-1.5 flex items-center justify-between text-[9px] text-gray-500">
+          {selectedHour != null ? (
+            <button
+              onClick={() => {
+                skipCommitRef.current = true;
+                if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+                onSelectHour(null);
+                const el = scrollRef.current;
+                if (el) el.scrollLeft = nowIndex * CELL_STRIDE;
+              }}
+              className="flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-blue-500"
+              aria-label="Show current conditions"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                <path fillRule="evenodd" d="M1 8a7 7 0 1 1 14 0A7 7 0 0 1 1 8Zm7.75-4.25a.75.75 0 0 0-1.5 0V8c0 .414.336.75.75.75h3.25a.75.75 0 0 0 0-1.5H8.75V3.75Z" clipRule="evenodd" />
+              </svg>
+              Reset
+            </button>
+          ) : (
+            <div className="w-10" />
+          )}
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{ backgroundColor: FAV_COLORS.more }} />
+              Favorable
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{ backgroundColor: FAV_COLORS.caution }} />
+              Caution
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{ backgroundColor: FAV_COLORS.less }} />
+              Less ideal
+            </span>
+          </div>
+          {(() => {
+            const h = forecast.hourly[centerIndex];
+            if (!h) return null;
+            const tempF = Math.round(celsiusToFahrenheit(h.temperature_2m));
+            const windMph = Math.round(kmhToMph(h.wind_speed_80m));
+            return (
+              <span className="text-[10px] text-gray-600">
+                {tempF}°F · {windMph}mph
+              </span>
+            );
+          })()}
+        </div>
       </div>
 
-      {/* Day-segmented view for mobile — wider bars per day */}
-      <div className="flex gap-px md:hidden">
-        {hours
-          .filter((_, i) => {
-            const dayStart = dayLabels[activeDay]?.index ?? 0;
-            const dayEnd = dayLabels[activeDay + 1]?.index ?? hours.length;
-            return i >= dayStart && i < dayEnd;
-          })
-          .map((h) => {
+      {/* ===== DESKTOP: unchanged 72-bar view ===== */}
+      <div className="hidden md:block" data-tour-step="timeline">
+        <div className="mb-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+            72-Hour Conditions
+          </p>
+        </div>
+
+        <div className="flex gap-px">
+          {hours.map((h) => {
             const isPast = h.index < nowIndex;
             const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
             const isSelected = selectedHour === h.index;
@@ -191,7 +364,7 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }:
                 key={h.index}
                 onClick={() => onSelectHour(h.index)}
                 className="relative flex-1 transition-transform hover:scale-y-110"
-                style={{ height: 32 }}
+                style={{ height: 24 }}
                 aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
                 title={`${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
               >
@@ -212,43 +385,44 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }:
               </button>
             );
           })}
-      </div>
-
-      {/* Day labels — desktop only */}
-      <div className="relative mt-1 h-3 hidden md:block">
-        {dayLabels.map((dl) => (
-          <span
-            key={dl.index}
-            className="absolute text-[9px] text-gray-400"
-            style={{ left: `${(dl.index / hours.length) * 100}%` }}
-          >
-            {dl.label}
-          </span>
-        ))}
-      </div>
-
-      {/* Selection label with Reset */}
-      {selectedLabel && (
-        <div className="mt-2 flex items-center gap-2 rounded-md bg-blue-50 px-2.5 py-1.5">
-          <span className="text-[11px] font-semibold text-blue-700">
-            Showing conditions for {selectedLabel}
-          </span>
-          <button
-            onClick={() => onSelectHour(null)}
-            className="text-[10px] font-medium text-blue-500 hover:text-blue-700"
-            aria-label="Reset to current time"
-          >
-            Reset
-          </button>
         </div>
-      )}
 
-      {/* Best window summary — shown when no hour is selected */}
-      {!selectedLabel && bestWindow && (
-        <p className="mt-1.5 text-[11px] text-green-700">
-          Best window: {bestWindow}
-        </p>
-      )}
+        {/* Day labels */}
+        <div className="relative mt-1 h-3">
+          {dayLabels.map((dl) => (
+            <span
+              key={dl.index}
+              className="absolute text-[9px] text-gray-400"
+              style={{ left: `${(dl.index / hours.length) * 100}%` }}
+            >
+              {dl.label}
+            </span>
+          ))}
+        </div>
+
+        {/* Selection label with Reset */}
+        {selectedLabel && (
+          <div className="mt-2 flex items-center gap-2 rounded-md bg-blue-50 px-2.5 py-1.5">
+            <span className="text-[11px] font-semibold text-blue-700">
+              Showing conditions for {selectedLabel}
+            </span>
+            <button
+              onClick={() => onSelectHour(null)}
+              className="text-[10px] font-medium text-blue-500 hover:text-blue-700"
+              aria-label="Reset to current time"
+            >
+              Reset
+            </button>
+          </div>
+        )}
+
+        {/* Next window summary — shown when no hour is selected */}
+        {!selectedLabel && nextWindow && (
+          <p className="mt-1.5 text-[11px] text-green-700">
+            Next window: {nextWindow.label}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

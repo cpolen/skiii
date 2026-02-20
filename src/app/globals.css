@@ -48,3 +48,28 @@ body {
 .mapboxgl-ctrl-attrib {
   font-size: 10px;
 }
+
+/* Hide scrollbar on scrollable timeline */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Edge fade gradients for scrollable timeline — hints at scrollability */
+.timeline-fade::before,
+.timeline-fade::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  z-index: 5;
+  pointer-events: none;
+}
+.timeline-fade::before {
+  left: 0;
+  background: linear-gradient(to right, white, transparent);
+}
+.timeline-fade::after {
+  right: 0;
+  background: linear-gradient(to left, white, transparent);
+}

@@ -11,7 +11,7 @@ import { useAvyForecast } from '@/hooks/useAvyForecast';
 import { assessConditions } from '@/lib/analysis/scoring';
 import { WeatherSummary } from './WeatherSummary';
 import { AvyDangerBanner } from './AvyDangerBanner';
-import { ConditionsGauge } from './ConditionsGauge';
+import { OverviewTimeline } from './OverviewTimeline';
 import { VariantSelector } from './VariantSelector';
 
 
@@ -40,13 +40,14 @@ function kmToMiles(km: number): number {
  * Sidebar view for a selected tour: header + collapsed static info accordion +
  * dynamic weather/timeline/gear conditions below.
  */
-export function SidebarConditions({ tour }: { tour: Tour }) {
+export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTimeline?: boolean }) {
   const router = useRouter();
   const { data: forecast } = useWeather(tour);
   const { data: avyData } = useAvyForecast();
   const selectedHour = useMapStore((s) => s.selectedForecastHour);
   const setSelectedHour = useMapStore((s) => s.setSelectedForecastHour);
   const selectedVariantIndex = useMapStore((s) => s.selectedVariantIndex);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const diff = DIFFICULTY_LABELS[tour.difficulty];
   const ates = ATES_LABELS[tour.ates_rating];
   const aspects = tour.variants.flatMap((v) => v.primary_aspects);
@@ -81,11 +82,34 @@ export function SidebarConditions({ tour }: { tour: Tour }) {
                 {diff.label}
               </span>
             )}
+            {ates && (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${ates.color}`}
+                title="Avalanche Terrain Exposure Scale — Simple: minimal avy terrain. Challenging: well-defined avy paths. Complex: multiple overlapping avy paths."
+                aria-label={`${ates.label} — Avalanche Terrain Exposure Scale`}
+              >
+                {ates.label}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Quick stats row */}
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
+        {/* Quick stats row with inline Route Details toggle */}
+        <div className="mt-1.5 flex items-center gap-x-3 text-[11px] text-gray-500">
+          <button
+            onClick={() => setDetailsOpen((v) => !v)}
+            className="flex items-center gap-0.5 font-medium text-blue-600 hover:text-blue-800"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 16 16"
+              fill="currentColor"
+              className={`h-3 w-3 transition-transform duration-150 ${detailsOpen ? 'rotate-90' : ''}`}
+            >
+              <path fillRule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+            </svg>
+            Details
+          </button>
           <span>{kmToMiles(tour.distance_km)} mi</span>
           <span>{metersToFeet(tour.elevation_gain_m).toLocaleString()}&apos; gain</span>
           <span>
@@ -93,29 +117,13 @@ export function SidebarConditions({ tour }: { tour: Tour }) {
           </span>
           <span>{uniqueAspects.join(', ')}</span>
         </div>
-
-        {/* ATES badge */}
-        {ates && (
-          <span
-            className={`mt-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${ates.color}`}
-            title="Avalanche Terrain Exposure Scale — Simple: minimal avy terrain. Challenging: well-defined avy paths. Complex: multiple overlapping avy paths."
-            aria-label={`${ates.label} — Avalanche Terrain Exposure Scale`}
-          >
-            {ates.label}
-          </span>
-        )}
       </div>
 
-      {/* Collapsed accordion: static route details */}
-      <details className="mx-4 mt-3 rounded-xl ring-1 ring-gray-100">
-        <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 hover:text-gray-900">
-          Route Details
-          <span className="ml-1 text-[10px] text-gray-500">
-            (description, variants, hazards, parking)
-          </span>
-        </summary>
+      {/* Route details content — toggled by the inline Details button above */}
+      {detailsOpen && (
+      <div className="mx-4 mt-1 rounded-xl ring-1 ring-gray-100">
 
-        <div className="space-y-3 border-t border-gray-100 px-3 py-3">
+        <div className="space-y-3 px-3 py-3">
           {/* Description */}
           <p className="text-xs leading-relaxed text-gray-600">{tour.description}</p>
 
@@ -232,54 +240,89 @@ export function SidebarConditions({ tour }: { tour: Tour }) {
             </a>
           </div>
         </div>
-      </details>
-
-      {/* Quick decision indicator */}
-      <div className={`mx-4 mt-3 flex items-center gap-2 rounded-lg px-3 py-2 ${
-        conditionsAssessment.composite >= 60
-          ? 'bg-green-50 text-green-800'
-          : conditionsAssessment.composite >= 30
-            ? 'bg-amber-50 text-amber-800'
-            : 'bg-red-50 text-red-800'
-      }`}>
-        <span className="text-lg">
-          {conditionsAssessment.composite >= 60 ? '\u2713' : conditionsAssessment.composite >= 30 ? '\u26A0' : '\u2717'}
-        </span>
-        <div>
-          <p className="text-xs font-semibold">
-            {conditionsAssessment.composite >= 60
-              ? 'Conditions look favorable'
-              : conditionsAssessment.composite >= 30
-                ? 'Exercise extra caution'
-                : 'Conditions not recommended'}
-          </p>
-          <p className="text-[10px] opacity-80">
-            {conditionsAssessment.reasons[0] || 'Based on current conditions assessment'}
-          </p>
-        </div>
       </div>
+      )}
 
-      {/* Conditions assessment gauge */}
-      <ConditionsGauge assessment={conditionsAssessment} />
-
-      {/* Avalanche danger */}
-      <div className="mt-1 border-t border-gray-100">
-        <AvyDangerBanner selectedTime={selectedHour != null && forecast ? forecast.hourly[selectedHour]?.time ?? null : null} />
-      </div>
-
-      {/* Favorable touring windows */}
-      {forecast && (
-        <div className="border-t border-gray-100">
-          <FavorableWindowsBox
-            windows={allWindows}
+      {/* Timeline — same component as main page, shares Zustand state */}
+      {forecast && !hideTimeline && (
+        <div className="mx-4 mt-3">
+          <OverviewTimeline
             forecast={forecast}
             tour={tour}
             selectedHour={selectedHour}
-            tourDurationHours={tourDurationHours}
             onSelectHour={setSelectedHour}
           />
         </div>
       )}
+
+      {/* Unified conditions card */}
+      <div className="mx-4 mt-3 rounded-xl bg-white shadow-sm ring-1 ring-gray-100" data-tour-step="conditions-score">
+        {/* Score header: band color bar + score + label */}
+        <div className="flex items-center gap-3 px-3 py-2.5">
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <div
+                className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-100"
+                role="progressbar"
+                aria-valuenow={conditionsAssessment.composite}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Conditions score: ${conditionsAssessment.composite} out of 100`}
+              >
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+                  style={{ width: `${conditionsAssessment.composite}%`, backgroundColor: conditionsAssessment.bandColor }}
+                />
+              </div>
+              <span className="text-sm font-bold tabular-nums" style={{ color: conditionsAssessment.bandColor }}>
+                {conditionsAssessment.composite}
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs font-semibold" style={{ color: conditionsAssessment.bandColor }}>
+              {conditionsAssessment.bandLabel}
+            </p>
+          </div>
+          {/* Dimension pills */}
+          <div className="flex flex-col gap-0.5 text-[9px]">
+            {conditionsAssessment.avalanche != null && (
+              <DimensionRow label="Avy" score={conditionsAssessment.avalanche} />
+            )}
+            <DimensionRow label="Wx" score={conditionsAssessment.weather} />
+            <DimensionRow label="Terr" score={conditionsAssessment.terrain} />
+          </div>
+        </div>
+
+        {/* Key reasons */}
+        {conditionsAssessment.reasons.length > 0 && (
+          <div className="border-t border-gray-100 px-3 py-2">
+            {conditionsAssessment.reasons.map((r, i) => (
+              <p key={i} className="flex items-start gap-1.5 text-[11px] text-gray-600">
+                <span className="mt-px text-gray-300">{'\u2022'}</span>
+                {r}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {/* Avalanche danger inline */}
+        <div className="border-t border-gray-100" data-tour-step="avy-danger">
+          <AvyDangerBanner selectedTime={selectedHour != null && forecast ? forecast.hourly[selectedHour]?.time ?? null : null} inline />
+        </div>
+
+        {/* Favorable windows / selected window */}
+        {forecast && (
+          <div className="border-t border-gray-100">
+            <FavorableWindowsBox
+              windows={allWindows}
+              forecast={forecast}
+              tour={tour}
+              selectedHour={selectedHour}
+              tourDurationHours={tourDurationHours}
+              onSelectHour={setSelectedHour}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Dynamic conditions — always visible below the accordion */}
       <div className="border-t border-gray-100">
@@ -327,12 +370,16 @@ function ShareButton({ tourName }: { tourName: string }) {
 
   const handleShare = async () => {
     const url = window.location.href;
-    if (navigator.share) {
-      await navigator.share({ title: `Skiii: ${tourName}`, url });
-    } else {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Skiii: ${tourName}`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    } catch {
+      // User canceled share dialog — not an error
     }
   };
 
@@ -348,6 +395,22 @@ function ShareButton({ tourName }: { tourName: string }) {
     >
       {copied ? 'Copied!' : 'Share'}
     </button>
+  );
+}
+
+function DimensionRow({ label, score }: { label: string; score: number }) {
+  let scoreColor = '#16A34A'; // green
+  if (score < 40) scoreColor = '#EF4444'; // red
+  else if (score < 60) scoreColor = '#F7941E'; // orange
+  else if (score < 80) scoreColor = '#EAB308'; // yellow
+
+  return (
+    <span className="flex items-center gap-1 text-gray-400">
+      {label}
+      <span className="font-bold tabular-nums" style={{ color: scoreColor }}>
+        {score}
+      </span>
+    </span>
   );
 }
 

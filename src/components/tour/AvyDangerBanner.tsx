@@ -143,12 +143,12 @@ function extractAspects(locations: string[]): string[] {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function AvyDangerBanner({ selectedTime }: { selectedTime?: string | null }) {
+export function AvyDangerBanner({ selectedTime, inline }: { selectedTime?: string | null; inline?: boolean }) {
   const { data, isLoading } = useAvyForecast();
 
   if (isLoading) {
     return (
-      <div className="px-4 py-2">
+      <div className={inline ? 'px-3 py-2' : 'px-4 py-2'}>
         <div className="h-4 w-32 animate-pulse rounded bg-gray-200" />
       </div>
     );
@@ -159,7 +159,7 @@ export function AvyDangerBanner({ selectedTime }: { selectedTime?: string | null
 
   if (zone.off_season) {
     return (
-      <div className="px-4 py-2 text-[11px] text-gray-500">
+      <div className={`${inline ? 'px-3' : 'px-4'} py-2 text-[11px] text-gray-500`}>
         SAC avalanche forecast: Off season
       </div>
     );
@@ -185,7 +185,7 @@ export function AvyDangerBanner({ selectedTime }: { selectedTime?: string | null
     : null;
 
   return (
-    <div className={`mx-4 my-2 rounded-lg border ${style.border} ${style.bg} px-3 py-2`}>
+    <div className={inline ? `${style.bg} px-3 py-2.5` : `mx-4 my-2 rounded-lg border ${style.border} ${style.bg} px-3 py-2`}>
       {/* Header row */}
       <div className="flex items-center gap-2">
         <span className="text-sm">{icon}</span>

@@ -108,7 +108,10 @@ export const useMapStore = create<MapState>((set) => ({
   setSelectedForecastHour: (hour) => set({ selectedForecastHour: hour }),
   setTopTourSlugs: (slugs) => set({ topTourSlugs: slugs }),
   selectTour: (slug) =>
-    set({ selectedTourSlug: slug, selectedVariantIndex: 0, isEditingRoute: false, editingCoordinates: null }),
+    set((state) => slug
+      ? { selectedTourSlug: slug, selectedVariantIndex: 0, isEditingRoute: false, editingCoordinates: null }
+      : { selectedTourSlug: null, selectedVariantIndex: 0, isEditingRoute: false, editingCoordinates: null, center: TAHOE_CENTER, zoom: DEFAULT_ZOOM, pitch: state.show3DTerrain ? 60 : 0, bearing: 0 },
+    ),
   setSelectedVariantIndex: (idx) => set({ selectedVariantIndex: idx }),
   toggleRouteEditor: () =>
     set((state) => {

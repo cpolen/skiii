@@ -21,6 +21,10 @@ const HOURLY_PARAMS = [
   'visibility',
   'freezing_level_height',
   'is_day',
+  'dewpoint_2m',
+  'shortwave_radiation',
+  'direct_normal_irradiance',
+  'snow_depth',
 ].join(',');
 
 export async function GET(request: NextRequest) {
@@ -45,6 +49,7 @@ export async function GET(request: NextRequest) {
   url.searchParams.set('hourly', HOURLY_PARAMS);
   url.searchParams.set('daily', 'sunrise,sunset');
   url.searchParams.set('forecast_days', '3');
+  url.searchParams.set('past_days', '3');
   url.searchParams.set('timezone', 'America/Los_Angeles');
   url.searchParams.set('temperature_unit', 'celsius');
   url.searchParams.set('wind_speed_unit', 'kmh');
@@ -100,6 +105,10 @@ function transformResponse(
     visibility: (h.visibility as number[])[i],
     freezing_level_height: (h.freezing_level_height as number[])[i],
     is_day: (h.is_day as number[])[i] === 1,
+    dewpoint_2m: (h.dewpoint_2m as number[])[i],
+    shortwave_radiation: (h.shortwave_radiation as number[])[i],
+    direct_normal_irradiance: (h.direct_normal_irradiance as number[])[i],
+    snow_depth: (h.snow_depth as number[])[i],
   }));
 
   return {

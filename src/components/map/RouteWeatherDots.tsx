@@ -129,21 +129,6 @@ function computeRouteBbox(slug: string): GridBbox | null {
   };
 }
 
-/** Format a time label for the floating badge. */
-function formatTimeLabel(selectedHour: number | null, hourlyTime?: string): string {
-  if (selectedHour == null || !hourlyTime) return 'Now';
-
-  const d = new Date(hourlyTime);
-  const now = new Date();
-  const tomorrow = new Date(now.getTime() + 86400000);
-  let dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
-  if (d.toDateString() === now.toDateString()) dayLabel = 'Today';
-  else if (d.toDateString() === tomorrow.toDateString()) dayLabel = 'Tomorrow';
-  const h = d.getHours();
-  const hourLabel = h === 0 ? '12 AM' : h === 12 ? '12 PM' : h < 12 ? `${h} AM` : `${h - 12} PM`;
-  return `${dayLabel} ${hourLabel}`;
-}
-
 function removeAll(map: mapboxgl.Map) {
   try {
     for (const id of ALL_LAYERS) {
@@ -240,12 +225,6 @@ export function RouteWeatherDots({ map }: { map: mapboxgl.Map | null }) {
   }, [forecast, tour, selectedForecastHour]);
 
   const tempF = hourData ? Math.round(celsiusToFahrenheit(hourData.temperature_2m)) : null;
-
-  // Build the time label for the floating badge
-  const timeLabel = formatTimeLabel(
-    selectedForecastHour,
-    selectedForecastHour != null ? forecast?.hourly[selectedForecastHour]?.time : undefined,
-  );
 
   useEffect(() => {
     if (!map) return;
@@ -497,12 +476,5 @@ export function RouteWeatherDots({ map }: { map: mapboxgl.Map | null }) {
     };
   }, [map]);
 
-  // Don't render the time badge if no tour selected or no grid data
-  if (!selectedTourSlug || !gridData) return null;
-
-  return (
-    <div className="absolute right-14 top-3 z-10 rounded-md bg-gray-900/80 px-2.5 py-1.5 text-xs font-medium text-white shadow-md backdrop-blur-sm">
-      Route conditions: {timeLabel}
-    </div>
-  );
+  return null;
 }

@@ -1,6 +1,6 @@
 import type { WeatherForecast, HourlyWeather } from '@/lib/types/conditions';
 import type { Tour, TourVariant } from '@/lib/types/tour';
-import { kmhToMph, celsiusToFahrenheit } from '@/lib/types/conditions';
+import { kmhToMph, celsiusToFahrenheit, getLoadedAspect } from '@/lib/types/conditions';
 import { getSunPosition } from './solar';
 
 // ---------------------------------------------------------------------------
@@ -24,6 +24,16 @@ export interface SnowClassification {
   label: string;
   emoji: string;
   detail: string;
+  /** Quality score 0-100 (powder and corn only) */
+  score?: number;
+  /** Confidence in the classification */
+  confidence?: 'low' | 'medium' | 'high';
+  /** Corn window start time (ISO string) */
+  cornWindowStart?: string;
+  /** Corn window end time (ISO string) */
+  cornWindowEnd?: string;
+  /** Recommended trailhead departure time (ISO string) */
+  startBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,12 +56,250 @@ function sunHitsAspect(sunAzimuth: number, aspectBearing: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Shared helpers (used by both corn and powder scoring)
+// ---------------------------------------------------------------------------
+
+/** Average cloud cover (%) during nighttime hours in the 12h before refMs. */
+function overnightCloudCover(hourly: HourlyWeather[], refMs: number): number {
+  const h12ago = refMs - 12 * 3600 * 1000;
+  let sum = 0;
+  let count = 0;
+  for (const h of hourly) {
+    const t = new Date(h.time).getTime();
+    if (t > refMs) break;
+    if (t < h12ago) continue;
+    if (!h.is_day) {
+      sum += h.cloud_cover;
+      count++;
+    }
+  }
+  return count > 0 ? sum / count : 100; // assume cloudy if no data
+}
+
+/** Overnight freeze duration (hours below 0°C) and min temperature in past 12h. */
+function overnightFreezeStats(
+  hourly: HourlyWeather[],
+  refMs: number,
+): { freezeHours: number; minTempC: number } {
+  const h12ago = refMs - 12 * 3600 * 1000;
+  let freezeHours = 0;
+  let minTempC = Infinity;
+  for (const h of hourly) {
+    const t = new Date(h.time).getTime();
+    if (t > refMs) break;
+    if (t < h12ago) continue;
+    if (!h.is_day && h.temperature_2m < 0) {
+      freezeHours++;
+      minTempC = Math.min(minTempC, h.temperature_2m);
+    }
+  }
+  return { freezeHours, minTempC: minTempC === Infinity ? 0 : minTempC };
+}
+
+/** Dewpoint depression at the reference hour (temp minus dewpoint in °C). */
+function dewpointDepression(hour: HourlyWeather): number {
+  return hour.temperature_2m - hour.dewpoint_2m;
+}
+
+/** Days since last significant snowfall (> 2cm in a single hour). Scans backward from refMs. */
+function daysSinceSnowfall(hourly: HourlyWeather[], refMs: number): number {
+  for (let i = hourly.length - 1; i >= 0; i--) {
+    const t = new Date(hourly[i].time).getTime();
+    if (t > refMs) continue;
+    if (hourly[i].snowfall > 2) {
+      return Math.max(0, (refMs - t) / (24 * 3600 * 1000));
+    }
+  }
+  return 7; // no snowfall found in data range — assume > 7 days
+}
+
+/**
+ * Count consecutive days (up to refMs) where temperature crossed 0°C in
+ * both directions (freeze at night + thaw during day). This indicates an
+ * established melt-freeze cycle.
+ */
+function countMeltFreezeDays(hourly: HourlyWeather[], refMs: number): number {
+  // Group hours by calendar date
+  const dayMap = new Map<string, { hadFreeze: boolean; hadThaw: boolean }>();
+  for (const h of hourly) {
+    const t = new Date(h.time).getTime();
+    if (t > refMs) break;
+    const dateKey = h.time.slice(0, 10); // YYYY-MM-DD
+    let entry = dayMap.get(dateKey);
+    if (!entry) {
+      entry = { hadFreeze: false, hadThaw: false };
+      dayMap.set(dateKey, entry);
+    }
+    if (h.temperature_2m < 0) entry.hadFreeze = true;
+    if (h.temperature_2m > 0 && h.is_day) entry.hadThaw = true;
+  }
+
+  // Count consecutive melt-freeze days working backward from most recent
+  const dates = [...dayMap.keys()].sort().reverse();
+  let count = 0;
+  for (const date of dates) {
+    const entry = dayMap.get(date)!;
+    if (entry.hadFreeze && entry.hadThaw) {
+      count++;
+    } else {
+      break; // streak broken
+    }
+  }
+  return count;
+}
+
+// ---------------------------------------------------------------------------
+// Powder quality scoring
+// ---------------------------------------------------------------------------
+
+/**
+ * Score powder quality on a 0-100 scale.
+ * Factors: snowfall amount (30), recency (20), temperature/density (20),
+ * wind speed (15), wind direction vs aspect (15).
+ */
+function scorePowderQuality(
+  snowfall48h: number,
+  snowfall12h: number,
+  tourTempF: number,
+  ridgeWindMph: number,
+  windDir80m: number,
+  aspects: string[],
+): { score: number; qualityNote: string } {
+  let score = 0;
+  const notes: string[] = [];
+
+  // 1. Snowfall amount (30 pts) — 10cm=0, 15cm=10, 25cm=20, 40cm+=30
+  if (snowfall48h >= 40) {
+    score += 30;
+  } else if (snowfall48h >= 15) {
+    score += Math.round(10 + ((snowfall48h - 15) / 25) * 20);
+  } else if (snowfall48h >= 10) {
+    score += Math.round(((snowfall48h - 10) / 5) * 10);
+  }
+
+  // 2. Recency (20 pts) — ratio of last-12h snowfall to 48h total
+  if (snowfall48h > 0) {
+    const recencyRatio = snowfall12h / snowfall48h;
+    score += Math.round(recencyRatio * 20);
+    if (recencyRatio > 0.6) notes.push('fresh');
+    else if (recencyRatio < 0.2) notes.push('settling');
+  }
+
+  // 3. Temperature / density proxy (20 pts)
+  if (tourTempF < 15) {
+    score += 20;
+    notes.push('cold & dry');
+  } else if (tourTempF < 25) {
+    score += 15;
+  } else if (tourTempF < 32) {
+    score += 10;
+  }
+  // > 32°F = 0 pts (wet snow)
+
+  // 4. Wind speed (15 pts)
+  if (ridgeWindMph < 10) {
+    score += 15;
+    notes.push('calm');
+  } else if (ridgeWindMph < 20) {
+    score += 10;
+  } else if (ridgeWindMph < 25) {
+    score += 5;
+  }
+
+  // 5. Wind direction vs aspect (15 pts)
+  const loadedAspect = getLoadedAspect(windDir80m);
+  const isLoading = aspects.includes(loadedAspect);
+  // Check if wind is scouring (wind FROM the aspect direction)
+  const windFromAspect = getLoadedAspect((windDir80m + 180) % 360);
+  const isScouring = aspects.includes(windFromAspect);
+
+  if (isLoading) {
+    score += 15;
+    if (ridgeWindMph >= 10) notes.push(`wind-loaded on ${loadedAspect}`);
+  } else if (isScouring) {
+    score += 0;
+  } else {
+    score += 8; // neutral
+  }
+
+  const qualityNote = notes.length > 0 ? notes.join(' · ') : '';
+  return { score: Math.min(100, score), qualityNote };
+}
+
+// ---------------------------------------------------------------------------
+// Corn quality scoring
+// ---------------------------------------------------------------------------
+
+/**
+ * Score corn quality on a 0-100 scale.
+ * Factors: overnight cloud cover (25), freeze duration/strength (20),
+ * dewpoint depression (10), wind (10), days since snowfall (10),
+ * shortwave radiation (10), consecutive melt-freeze days (10), snow depth (5).
+ */
+function scoreCornQuality(
+  avgCloudCover: number,
+  freezeStats: { freezeHours: number; minTempC: number },
+  dpDepression: number,
+  ridgeWindMph: number,
+  daysSinceSnow: number,
+  avgShortwave: number,
+  meltFreezeDays: number,
+  snowDepthM: number,
+): number {
+  let score = 0;
+
+  // 1. Overnight cloud cover (25 pts) — clear = radiative cooling
+  // 0% cloud = 25pts, 100% cloud = 0pts
+  score += Math.round(25 * (1 - avgCloudCover / 100));
+
+  // 2. Freeze duration + strength (20 pts)
+  // >= 6 hours below freezing = full duration points (10)
+  const durationPts = Math.min(10, Math.round((freezeStats.freezeHours / 6) * 10));
+  // Min temp < -8°C = full strength points (10), > 0 = 0
+  const strengthPts = Math.min(10, Math.round(Math.max(0, -freezeStats.minTempC) / 8 * 10));
+  score += durationPts + strengthPts;
+
+  // 3. Dewpoint depression (10 pts) — dry air = better refreeze
+  // > 10°C depression = 10pts, 0 = 0
+  score += Math.min(10, Math.round(Math.max(0, dpDepression) / 10 * 10));
+
+  // 4. Wind speed (10 pts) — calm = even softening
+  if (ridgeWindMph < 10) score += 10;
+  else if (ridgeWindMph < 20) score += 6;
+  else if (ridgeWindMph < 30) score += 3;
+
+  // 5. Days since last snowfall (10 pts) — > 3 days = established surface
+  if (daysSinceSnow >= 3) score += 10;
+  else if (daysSinceSnow >= 2) score += 7;
+  else if (daysSinceSnow >= 1) score += 3;
+  // < 1 day = fresh snow disrupts corn cycle = 0
+
+  // 6. Shortwave radiation (10 pts) — drives the melt phase
+  // > 600 W/m² = 10pts, 0 = 0
+  score += Math.min(10, Math.round(Math.max(0, avgShortwave) / 600 * 10));
+
+  // 7. Consecutive melt-freeze days (10 pts)
+  if (meltFreezeDays >= 3) score += 10;
+  else if (meltFreezeDays >= 2) score += 7;
+  else if (meltFreezeDays >= 1) score += 3;
+
+  // 8. Snow depth (5 pts) — shallow pack = bad corn
+  // > 1m = 5pts, 0.5m = 3pts, < 0.3m = 0
+  if (snowDepthM >= 1) score += 5;
+  else if (snowDepthM >= 0.5) score += 3;
+  else if (snowDepthM >= 0.3) score += 1;
+
+  return Math.min(100, score);
+}
+
+// ---------------------------------------------------------------------------
 // Classification algorithm
 // ---------------------------------------------------------------------------
 
 /**
- * Classify the dominant snow type for a tour/variant based on the 72-hour
- * forecast. Checks run in priority order — first match wins.
+ * Classify the dominant snow type for a tour/variant based on the forecast.
+ * With past_days=3, the hourly array covers ~6 days (3 past + 3 forecast).
+ * Checks run in priority order — first match wins.
  *
  * @param selectedHour  Optional index into the forecast hourly array.
  *                      When provided, analysis is relative to that hour
@@ -90,7 +338,9 @@ export function classifySnow(
 
   // Accumulate snowfall and precip over past 48 hours relative to reference time
   const h48ago = refMs - 48 * 3600 * 1000;
+  const h12ago = refMs - 12 * 3600 * 1000;
   let snowfall48h = 0;
+  let snowfall12h = 0;
   let hadRainOnSnow = false;
   let tempCrossings = 0;
   let prevAboveFreezing: boolean | null = null;
@@ -101,6 +351,7 @@ export function classifySnow(
     if (t < h48ago) continue;
 
     snowfall48h += h.snowfall; // cm/hr accumulated
+    if (t >= h12ago) snowfall12h += h.snowfall;
 
     // Check rain-on-snow: precip while freezing level above tour max
     const freezingM = h.freezing_level_height;
@@ -127,21 +378,43 @@ export function classifySnow(
   const elevDiffFt = tourMidElevFt - forecastElevFt;
   const tourTempF = Math.round(currentTempF - (elevDiffFt / 1000) * 3.5);
 
-  // 1. Powder check
+  // 1. Powder check (with quality scoring)
   if (
-    snowfall48h > 15 && // >15cm (~6") in 48h
-    currentHour.temperature_2m < 0 && // currently below freezing
+    snowfall48h > 10 && // >10cm (~4") in 48h (lowered from 15 to catch quality light powder)
+    tourTempF < 32 && // elevation-adjusted below freezing
     ridgeWindMph < 25 // not wind-packed
   ) {
-    return {
-      type: 'powder',
-      label: 'Powder',
-      emoji: '❄️',
-      detail: `${snowfall48hInches}" new in 48h`,
-    };
+    const aspects = variant.primary_aspects;
+    const { score, qualityNote } = scorePowderQuality(
+      snowfall48h,
+      snowfall12h,
+      tourTempF,
+      ridgeWindMph,
+      currentHour.wind_direction_80m,
+      aspects,
+    );
+
+    // Score < 25 falls through to packed-powder or other types
+    if (score >= 25) {
+      const label = score >= 75 ? 'Deep Powder' : score >= 50 ? 'Powder' : 'Light Powder';
+      const confidence: 'low' | 'medium' | 'high' =
+        score >= 75 ? 'high' : score >= 50 ? 'medium' : 'low';
+      const detailParts = [`${snowfall48hInches}"`];
+      if (qualityNote) detailParts.push(qualityNote);
+      else detailParts.push(`${tourTempF}°F`);
+
+      return {
+        type: 'powder',
+        label,
+        emoji: '❄️',
+        detail: detailParts.join(' · '),
+        score,
+        confidence,
+      };
+    }
   }
 
-  // 2. Corn check (aspect-specific spring cycle)
+  // 2. Corn check (aspect-specific spring cycle with quality scoring)
   const cornResult = checkCorn(forecast, tour, variant, currentIdx, refMs);
   if (cornResult) return cornResult;
 
@@ -174,8 +447,8 @@ export function classifySnow(
     };
   }
 
-  // 5. Packed powder — some recent snow (5-15cm) but below the powder threshold
-  if (snowfall48h >= 5 && currentHour.temperature_2m < 0) {
+  // 5. Packed powder — some recent snow (5-10cm) but below the powder threshold
+  if (snowfall48h >= 5 && tourTempF < 32) {
     return {
       type: 'packed-powder',
       label: 'Packed Powder',
@@ -247,7 +520,7 @@ export function classifySnow(
 }
 
 // ---------------------------------------------------------------------------
-// Corn detection helper
+// Corn detection helper (with quality scoring)
 // ---------------------------------------------------------------------------
 
 function checkCorn(
@@ -259,21 +532,11 @@ function checkCorn(
 ): SnowClassification | null {
   const hourly = forecast.hourly;
 
-  // Check overnight refreeze: any hour in previous 12h with temp < 0°C
-  let hadOvernightRefreeze = false;
-  const h12ago = refMs - 12 * 3600 * 1000;
-  for (const h of hourly) {
-    const t = new Date(h.time).getTime();
-    if (t > refMs) break;
-    if (t < h12ago) continue;
-    if (!h.is_day && h.temperature_2m < 0) {
-      hadOvernightRefreeze = true;
-      break;
-    }
-  }
-  if (!hadOvernightRefreeze) return null;
+  // Gate 1: Overnight refreeze — require >= 2 hours below freezing (stricter)
+  const freezeStats = overnightFreezeStats(hourly, refMs);
+  if (freezeStats.freezeHours < 2) return null;
 
-  // Check daytime warming: freezing level rises above tour min elevation
+  // Gate 2: Daytime warming — freezing level rises above tour min elevation
   const currentHour = hourly[currentIdx];
   if (currentHour.freezing_level_height < tour.min_elevation_m) return null;
 
@@ -281,9 +544,13 @@ function checkCorn(
   const [lng, lat] = tour.trailhead.geometry.coordinates as [number, number];
   const aspects = variant.primary_aspects;
 
-  // Look for corn window in daylight hours today (current idx forward, up to 12h)
-  let cornStart: string | null = null;
-  let cornEnd: string | null = null;
+  // Look for corn window in daylight hours (current idx forward, up to 12h)
+  let cornStartTime: Date | null = null;
+  let cornEndTime: Date | null = null;
+  let cornStartLabel: string | null = null;
+  let cornEndLabel: string | null = null;
+  let totalShortwave = 0;
+  let shortwaveCount = 0;
 
   for (let i = currentIdx; i < Math.min(currentIdx + 12, hourly.length); i++) {
     const h = hourly[i];
@@ -304,20 +571,65 @@ function checkCorn(
         hour: 'numeric',
         timeZone: 'America/Los_Angeles',
       });
-      if (!cornStart) cornStart = hourLabel;
-      cornEnd = hourLabel;
+      if (!cornStartTime) {
+        cornStartTime = hourTime;
+        cornStartLabel = hourLabel;
+      }
+      cornEndTime = hourTime;
+      cornEndLabel = hourLabel;
+      totalShortwave += h.direct_normal_irradiance;
+      shortwaveCount++;
     }
   }
 
-  if (cornStart && cornEnd) {
-    const aspectStr = aspects.join('/');
-    return {
-      type: 'corn',
-      label: 'Corn',
-      emoji: '🌽',
-      detail: `Corn window ${cornStart}–${cornEnd} on ${aspectStr}`,
-    };
-  }
+  if (!cornStartTime || !cornEndTime || !cornStartLabel || !cornEndLabel) return null;
 
-  return null;
+  // Compute corn quality score
+  const avgCloud = overnightCloudCover(hourly, refMs);
+  const dpDep = dewpointDepression(currentHour);
+  const daysSinceSnow = daysSinceSnowfall(hourly, refMs);
+  const avgShortwave = shortwaveCount > 0 ? totalShortwave / shortwaveCount : 0;
+  const meltFreezeDays = countMeltFreezeDays(hourly, refMs);
+  const snowDepthM = currentHour.snow_depth;
+  const ridgeWindMph = kmhToMph(currentHour.wind_speed_80m);
+
+  const score = scoreCornQuality(
+    avgCloud,
+    freezeStats,
+    dpDep,
+    ridgeWindMph,
+    daysSinceSnow,
+    avgShortwave,
+    meltFreezeDays,
+    snowDepthM,
+  );
+
+  // Score < 25 = not reliable corn
+  if (score < 25) return null;
+
+  // Compute "start by" time: corn window start minus ascent time
+  // Ascent rate: 350 m/hr (Munter method for skinning)
+  const ascentHours = tour.elevation_gain_m / 350;
+  const startByTime = new Date(cornStartTime.getTime() - ascentHours * 3600 * 1000);
+  const startByLabel = startByTime.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    timeZone: 'America/Los_Angeles',
+  });
+
+  const label = score >= 75 ? 'Prime Corn' : score >= 50 ? 'Good Corn' : 'Fair Corn';
+  const confidence: 'low' | 'medium' | 'high' =
+    score >= 75 ? 'high' : score >= 50 ? 'medium' : 'low';
+  const aspectStr = aspects.join('/');
+
+  return {
+    type: 'corn',
+    label,
+    emoji: '🌽',
+    detail: `${cornStartLabel}–${cornEndLabel} on ${aspectStr} · Start by ${startByLabel}`,
+    score,
+    confidence,
+    cornWindowStart: cornStartTime.toISOString(),
+    cornWindowEnd: cornEndTime.toISOString(),
+    startBy: startByTime.toISOString(),
+  };
 }

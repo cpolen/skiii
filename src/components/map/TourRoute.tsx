@@ -199,7 +199,14 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
           (b, c) => b.extend([c[0], c[1]]),
           new mapboxgl.LngLatBounds([allCoords[0][0], allCoords[0][1]], [allCoords[0][0], allCoords[0][1]]),
         );
-        map!.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 1000 });
+        const isMobile = window.innerWidth < 768;
+        map!.fitBounds(bounds, {
+          padding: isMobile
+            ? { top: 60, bottom: Math.round(window.innerHeight * 0.48), left: 40, right: 40 }
+            : 80,
+          maxZoom: 14,
+          duration: 1000,
+        });
       }
     }
 
@@ -228,7 +235,7 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
   if (!hasSkiRoute) return null;
 
   return (
-    <div className="absolute top-20 right-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm">
+    <div className="absolute top-3 right-14 z-10 rounded-lg bg-gray-900/85 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm">
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">

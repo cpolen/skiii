@@ -17,6 +17,10 @@ export interface HourlyWeather {
   visibility: number; // meters
   freezing_level_height: number; // meters above sea level
   is_day: boolean;
+  dewpoint_2m: number; // Celsius
+  shortwave_radiation: number; // W/m² (global horizontal irradiance)
+  direct_normal_irradiance: number; // W/m² (beam radiation on aspect)
+  snow_depth: number; // meters (total snowpack on ground)
 }
 
 export interface WeatherForecast {

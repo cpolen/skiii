@@ -36,7 +36,7 @@ export function MapControls() {
   })));
 
   return (
-    <div className="absolute left-3 top-3 z-10 flex flex-col gap-1.5">
+    <div className="absolute left-3 top-3 z-10 hidden md:flex flex-col gap-1.5">
       <LayerButton
         label="3D Terrain"
         active={show3DTerrain}
