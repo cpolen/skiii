@@ -247,40 +247,38 @@ export function scoreWeather(
     (tour.estimated_hours_range[0] + tour.estimated_hours_range[1]) / 2,
   );
 
+  // Resolve start hour: explicit selection or closest to now
+  let startHour: number;
   if (selectedHour != null) {
-    // Average across the tour duration window
-    const end = Math.min(selectedHour + tourDuration - 1, forecast.hourly.length - 1);
-    let totalScore = 0;
-    let count = 0;
-    const allReasons: string[] = [];
-    for (let i = selectedHour; i <= end; i++) {
-      const h = forecast.hourly[i];
-      if (!h) continue;
-      const result = assessHour(h, tourMaxFt, tourMinFt);
-      totalScore += rawHourScore(h, tourMaxFt, tourMinFt);
-      count++;
-      allReasons.push(...result.reasons);
-    }
-    const avgScore = count > 0 ? Math.round(totalScore / count) : 0;
-    return { score: hourScoreTo100(avgScore), reasons: allReasons };
-  }
-
-  // No selection — use hour closest to now
-  const now = new Date();
-  let closestIdx = 0;
-  let closestDiff = Infinity;
-  for (let i = 0; i < forecast.hourly.length; i++) {
-    const diff = Math.abs(new Date(forecast.hourly[i].time).getTime() - now.getTime());
-    if (diff < closestDiff) {
-      closestDiff = diff;
-      closestIdx = i;
+    startHour = selectedHour;
+  } else {
+    const now = new Date();
+    startHour = 0;
+    let closestDiff = Infinity;
+    for (let i = 0; i < forecast.hourly.length; i++) {
+      const diff = Math.abs(new Date(forecast.hourly[i].time).getTime() - now.getTime());
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        startHour = i;
+      }
     }
   }
 
-  const h = forecast.hourly[closestIdx];
-  const result = assessHour(h, tourMaxFt, tourMinFt);
-  const raw = rawHourScore(h, tourMaxFt, tourMinFt);
-  return { score: hourScoreTo100(raw), reasons: result.reasons };
+  // Average across the tour duration window
+  const end = Math.min(startHour + tourDuration - 1, forecast.hourly.length - 1);
+  let totalScore = 0;
+  let count = 0;
+  const allReasons: string[] = [];
+  for (let i = startHour; i <= end; i++) {
+    const h = forecast.hourly[i];
+    if (!h) continue;
+    const result = assessHour(h, tourMaxFt, tourMinFt);
+    totalScore += rawHourScore(h, tourMaxFt, tourMinFt);
+    count++;
+    allReasons.push(...result.reasons);
+  }
+  const avgScore = count > 0 ? Math.round(totalScore / count) : 0;
+  return { score: hourScoreTo100(avgScore), reasons: allReasons };
 }
 
 // ---------------------------------------------------------------------------

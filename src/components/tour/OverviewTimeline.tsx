@@ -215,12 +215,10 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
     <div className="md:mb-2 md:rounded-xl md:bg-white md:p-3 md:shadow-sm md:ring-1 md:ring-gray-100">
       {/* ===== MOBILE: scrollable timeline ===== */}
       <div className="md:hidden">
-        {/* Status row: current time (left) + context or next window (right) */}
+        {/* Status row: next window link (right-aligned) */}
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <p className="text-sm font-semibold text-gray-900">{centerLabel}</p>
-          {selectedLabel ? (
-            <p className="text-[11px] font-medium text-blue-700">Conditions for {selectedLabel}</p>
-          ) : nextWindow ? (
+          {nextWindow ? (
             <button
               onClick={() => {
                 onSelectHour(nextWindow.startIndex);
@@ -250,15 +248,15 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
             className="flex gap-px overflow-x-auto scrollbar-hide"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' }}
           >
-            {/* Leading spacer so the first cell can be centered */}
-            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2}px)` }} />
+            {/* Leading spacer so the first cell can be centered.
+               Accounts for the 1px flex gap between spacer and cell 0. */}
+            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2 + CELL_GAP}px)` }} />
 
             {hours.map((h) => {
               const isPast = h.index < nowIndex;
               const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
               const isSelected = selectedHour === h.index;
               const isNow = h.index === nowIndex;
-              const isDayStart = dayLabels.some((dl) => dl.index === h.index);
 
               return (
                 <button
@@ -270,7 +268,7 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
                     const el = scrollRef.current;
                     if (el) el.scrollTo({ left: h.index * CELL_STRIDE, behavior: 'smooth' });
                   }}
-                  className={`relative shrink-0 ${isDayStart && h.index > 0 ? 'ml-1' : ''} ${isPast ? 'cursor-default' : ''}`}
+                  className={`relative shrink-0 ${isPast ? 'cursor-default' : ''}`}
                   style={{ width: CELL_W, height: 28 }}
                   aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
                 >
@@ -293,7 +291,7 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
             })}
 
             {/* Trailing spacer so the last cell can be centered */}
-            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2}px)` }} />
+            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2 + CELL_GAP}px)` }} />
           </div>
         </div>
 

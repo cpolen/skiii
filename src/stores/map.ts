@@ -62,8 +62,8 @@ interface MapState {
 }
 
 // Lake Tahoe center coordinates
-const TAHOE_CENTER: [number, number] = [-120.0324, 39.0968];
-const DEFAULT_ZOOM = 9.5;
+const TAHOE_CENTER: [number, number] = [-120.03, 39.05];
+const DEFAULT_ZOOM = 8.5;
 
 export const useMapStore = create<MapState>((set) => ({
   center: TAHOE_CENTER,
