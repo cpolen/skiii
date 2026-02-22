@@ -78,7 +78,7 @@ export const useMapStore = create<MapState>((set) => ({
   showAspect: false,
   showSunExposure: false,
   showTreeCover: false,
-  showHazards: true,
+  showHazards: false,
   selectedTourSlug: null,
   selectedVariantIndex: 0,
   selectedForecastHour: null,

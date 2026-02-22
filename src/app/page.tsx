@@ -4,6 +4,7 @@ import { Suspense, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { TourMap } from '@/components/map/TourMap';
 import { MapControls } from '@/components/map/MapControls';
+import { MapLoadingIndicator } from '@/components/map/MapLoadingIndicator';
 import { TimelineOverlay } from '@/components/map/TimelineOverlay';
 import { TourPanel } from '@/components/tour/TourPanel';
 import { SafetyOverlay } from '@/components/ui/SafetyOverlay';
@@ -45,6 +46,7 @@ function HomeContent() {
       <main className="relative h-full flex-1 md:h-full" aria-label="Map">
         <TourMap />
         <MapControls />
+        <MapLoadingIndicator />
         <TimelineOverlay />
         <HelpButton />
       </main>

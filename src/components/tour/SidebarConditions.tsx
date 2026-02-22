@@ -42,7 +42,7 @@ function kmToMiles(km: number): number {
  */
 export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTimeline?: boolean }) {
   const router = useRouter();
-  const { data: forecast } = useWeather(tour);
+  const { data: forecast, isLoading: weatherLoading } = useWeather(tour);
   const { data: avyData } = useAvyForecast();
   const selectedHour = useMapStore((s) => s.selectedForecastHour);
   const setSelectedHour = useMapStore((s) => s.setSelectedForecastHour);
@@ -244,19 +244,30 @@ export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTime
       )}
 
       {/* Timeline — same component as main page, shares Zustand state */}
-      {forecast && !hideTimeline && (
-        <div className="mx-4 mt-3">
-          <OverviewTimeline
-            forecast={forecast}
-            tour={tour}
-            selectedHour={selectedHour}
-            onSelectHour={setSelectedHour}
-          />
-        </div>
+      {!hideTimeline && (
+        forecast ? (
+          <div className="mx-4 mt-3">
+            <OverviewTimeline
+              forecast={forecast}
+              tour={tour}
+              selectedHour={selectedHour}
+              onSelectHour={setSelectedHour}
+            />
+          </div>
+        ) : weatherLoading ? (
+          <div className="mx-4 mt-3 h-16 animate-pulse rounded-xl bg-gray-100" />
+        ) : null
       )}
 
       {/* Unified conditions card */}
       <div className="mx-4 mt-3 rounded-xl bg-white shadow-sm ring-1 ring-gray-100" data-tour-step="conditions-score">
+        {weatherLoading ? (
+          <div className="flex items-center gap-3 px-4 py-6">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-500" />
+            <span className="text-xs text-gray-500">Loading conditions data...</span>
+          </div>
+        ) : (
+          <div>
         {/* Score header: band color bar + score + label */}
         <div className="flex items-center gap-3 px-3 py-2.5">
           <div className="flex-1">
@@ -321,6 +332,8 @@ export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTime
               onSelectHour={setSelectedHour}
             />
           </div>
+        )}
+        </div>
         )}
       </div>
 
@@ -510,7 +523,19 @@ function FavorableWindowsBox({
   tourDurationHours: number;
   onSelectHour: (hour: number | null) => void;
 }) {
-  const favorable = windows.filter((w) => w.favorability === 'more');
+  // Determine the current hour index so we can hide windows that have already ended
+  const nowIdx = useMemo(() => {
+    const now = Date.now();
+    let best = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < forecast.hourly.length; i++) {
+      const diff = Math.abs(new Date(forecast.hourly[i].time).getTime() - now);
+      if (diff < bestDiff) { bestDiff = diff; best = i; }
+    }
+    return best;
+  }, [forecast.hourly]);
+
+  const favorable = windows.filter((w) => w.favorability === 'more' && w.endHour >= nowIdx);
   const unfavorable = windows.filter((w) => w.favorability === 'less');
   const caution = windows.filter((w) => w.favorability === 'caution');
 

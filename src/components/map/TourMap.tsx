@@ -237,12 +237,12 @@ export function TourMap() {
 
       mapRef.current.fitBounds(getTourMarkerBounds(), {
         padding: isMobile
-          ? { top: 60, bottom: Math.round(window.innerHeight * 0.48), left: 20, right: 20 }
+          ? { top: 60, bottom: Math.round(window.innerHeight * 0.35), left: 20, right: 20 }
           : { top: 40, bottom: 40, left: 40, right: 40 },
         pitch: show3DTerrain ? 60 : 0,
         bearing: 0,
         maxZoom: 10,
-        duration: animate ? 1000 : 0,
+        duration: animate ? 600 : 0,
       });
     }
   }, [selectedTourSlug, show3DTerrain, mapReady]);

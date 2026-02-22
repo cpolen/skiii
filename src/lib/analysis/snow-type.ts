@@ -576,7 +576,12 @@ function checkCorn(
         cornStartLabel = hourLabel;
       }
       cornEndTime = hourTime;
-      cornEndLabel = hourLabel;
+      // End label = next hour (end of this hour's window)
+      const endHour = new Date(hourTime.getTime() + 3600 * 1000);
+      cornEndLabel = endHour.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        timeZone: 'America/Los_Angeles',
+      });
       totalShortwave += h.direct_normal_irradiance;
       shortwaveCount++;
     }
@@ -607,10 +612,11 @@ function checkCorn(
   // Score < 25 = not reliable corn
   if (score < 25) return null;
 
-  // Compute "start by" time: corn window start minus ascent time
-  // Ascent rate: 350 m/hr (Munter method for skinning)
+  // Compute "leave by" time: corn window start minus ascent time minus transition buffer
+  // Ascent rate: 350 m/hr (Munter method for skinning), 30 min buffer for trailhead prep
   const ascentHours = tour.elevation_gain_m / 350;
-  const startByTime = new Date(cornStartTime.getTime() - ascentHours * 3600 * 1000);
+  const bufferMs = 30 * 60 * 1000;
+  const startByTime = new Date(cornStartTime.getTime() - ascentHours * 3600 * 1000 - bufferMs);
   const startByLabel = startByTime.toLocaleTimeString('en-US', {
     hour: 'numeric',
     timeZone: 'America/Los_Angeles',
@@ -621,15 +627,18 @@ function checkCorn(
     score >= 75 ? 'high' : score >= 50 ? 'medium' : 'low';
   const aspectStr = aspects.join('/');
 
+  const detailParts = [`${cornStartLabel}–${cornEndLabel} on ${aspectStr}`];
+  detailParts.push(`Leave by ${startByLabel}`);
+
   return {
     type: 'corn',
     label,
     emoji: '🌽',
-    detail: `${cornStartLabel}–${cornEndLabel} on ${aspectStr} · Start by ${startByLabel}`,
+    detail: detailParts.join(' · '),
     score,
     confidence,
     cornWindowStart: cornStartTime.toISOString(),
-    cornWindowEnd: cornEndTime.toISOString(),
+    cornWindowEnd: new Date(cornEndTime.getTime() + 3600 * 1000).toISOString(),
     startBy: startByTime.toISOString(),
   };
 }

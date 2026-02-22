@@ -5,6 +5,7 @@ import type { WeatherForecast } from '@/lib/types/conditions';
 import { metersToFeet, celsiusToFahrenheit, kmhToMph } from '@/lib/types/conditions';
 import type { Tour } from '@/lib/types/tour';
 import { assessHour } from '@/lib/analysis/timing';
+import type { Favorability } from '@/lib/analysis/timing';
 
 const FAV_COLORS = {
   more: '#16A34A',
@@ -43,15 +44,16 @@ interface OverviewTimelineProps {
   tour: Tour;
   selectedHour: number | null;
   onSelectHour: (hour: number | null) => void;
+  aggregatedFavorability?: Favorability[] | null;
 }
 
-export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }: OverviewTimelineProps) {
+export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, aggregatedFavorability }: OverviewTimelineProps) {
   const maxFt = metersToFeet(tour.max_elevation_m);
   const minFt = metersToFeet(tour.min_elevation_m);
 
   const hours = useMemo(() => {
     return forecast.hourly.map((h, i) => {
-      const { favorability } = assessHour(h, maxFt, minFt);
+      const favorability = aggregatedFavorability?.[i] ?? assessHour(h, maxFt, minFt).favorability;
       return {
         index: i,
         favorability,
@@ -59,7 +61,7 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }:
         time: h.time,
       };
     });
-  }, [forecast.hourly, maxFt, minFt]);
+  }, [forecast.hourly, maxFt, minFt, aggregatedFavorability]);
 
   // Find "now" index — closest hour to current time
   const nowIndex = useMemo(() => {
@@ -262,12 +264,13 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }:
                 <button
                   key={h.index}
                   onClick={() => {
+                    if (isPast) return;
                     onSelectHour(h.index);
                     setCenterIndex(h.index);
                     const el = scrollRef.current;
                     if (el) el.scrollTo({ left: h.index * CELL_STRIDE, behavior: 'smooth' });
                   }}
-                  className={`relative shrink-0 ${isDayStart && h.index > 0 ? 'ml-1' : ''}`}
+                  className={`relative shrink-0 ${isDayStart && h.index > 0 ? 'ml-1' : ''} ${isPast ? 'cursor-default' : ''}`}
                   style={{ width: CELL_W, height: 28 }}
                   aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
                 >
@@ -362,8 +365,8 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour }:
             return (
               <button
                 key={h.index}
-                onClick={() => onSelectHour(h.index)}
-                className="relative flex-1 transition-transform hover:scale-y-110"
+                onClick={() => { if (!isPast) onSelectHour(h.index); }}
+                className={`relative flex-1 transition-transform ${isPast ? 'cursor-default' : 'hover:scale-y-110'}`}
                 style={{ height: 24 }}
                 aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
                 title={`${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}

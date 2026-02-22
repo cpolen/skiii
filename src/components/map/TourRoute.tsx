@@ -202,10 +202,10 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
         const isMobile = window.innerWidth < 768;
         map!.fitBounds(bounds, {
           padding: isMobile
-            ? { top: 60, bottom: Math.round(window.innerHeight * 0.48), left: 40, right: 40 }
+            ? { top: 60, bottom: Math.round(window.innerHeight * 0.35), left: 40, right: 40 }
             : 80,
           maxZoom: 14,
-          duration: 1000,
+          duration: 600,
         });
       }
     }

@@ -4,7 +4,7 @@ import { memo } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Tour } from '@/lib/types/tour';
 import type { ConditionsAssessment } from '@/lib/analysis/scoring';
-import type { SnowClassification } from '@/lib/analysis/snow-type';
+import type { SnowClassification, SnowType } from '@/lib/analysis/snow-type';
 
 const DIFFICULTY_LABELS: Record<string, { label: string; color: string }> = {
   beginner: { label: 'Beginner', color: 'bg-green-100 text-green-800' },
@@ -27,6 +27,25 @@ function kmToMiles(km: number): number {
   return Math.round(km * 0.621371 * 10) / 10;
 }
 
+function formatWindow(startIso: string, endIso: string): string {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  const now = new Date();
+  const tomorrow = new Date(now.getTime() + 86400000);
+
+  let dayLabel: string;
+  if (start.toDateString() === now.toDateString()) dayLabel = 'Today';
+  else if (start.toDateString() === tomorrow.toDateString()) dayLabel = 'Tomorrow';
+  else dayLabel = start.toLocaleDateString('en-US', { weekday: 'short' });
+
+  const fmtHour = (d: Date) =>
+    d.toLocaleTimeString('en-US', { hour: 'numeric', timeZone: 'America/Los_Angeles' });
+
+  // end is the last favorable hour — show end + 1h for the window close
+  const endPlusOne = new Date(end.getTime() + 3600 * 1000);
+  return `${dayLabel} ${fmtHour(start)} – ${fmtHour(endPlusOne)}`;
+}
+
 export const TourCard = memo(function TourCard({
   tour,
   expanded,
@@ -34,6 +53,8 @@ export const TourCard = memo(function TourCard({
   snowType,
   isLoading,
   rank,
+  nextWindow,
+  onSnowTypeClick,
 }: {
   tour: Tour;
   expanded?: boolean;
@@ -41,6 +62,8 @@ export const TourCard = memo(function TourCard({
   snowType?: SnowClassification;
   isLoading?: boolean;
   rank?: number;
+  nextWindow?: { startTime: string; endTime: string } | null;
+  onSnowTypeClick?: (type: SnowType) => void;
 }) {
   const router = useRouter();
   const diff = DIFFICULTY_LABELS[tour.difficulty];
@@ -126,10 +149,24 @@ export const TourCard = memo(function TourCard({
 
       {/* Snow type */}
       {!isLoading && snowType && (
-        <p className="mt-1 text-[11px] text-gray-600">
+        <p
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onSnowTypeClick?.(snowType.type); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); onSnowTypeClick?.(snowType.type); } }}
+          className="mt-1 cursor-pointer text-[11px] text-gray-600 active:text-gray-900"
+        >
           <span className="mr-1">{snowType.emoji}</span>
-          <span className="font-medium">{snowType.label}</span>
+          <span className="font-medium underline decoration-gray-300 underline-offset-2">{snowType.label}</span>
           <span className="ml-1 text-gray-500">&middot; {snowType.detail}</span>
+        </p>
+      )}
+
+      {/* Favorable window */}
+      {!isLoading && nextWindow && (
+        <p className="mt-1 text-[11px] text-green-700">
+          <span className="mr-1">&#9679;</span>
+          <span className="font-medium">{formatWindow(nextWindow.startTime, nextWindow.endTime)}</span>
         </p>
       )}
 
