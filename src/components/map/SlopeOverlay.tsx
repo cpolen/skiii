@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
 import { useAvyForecast } from '@/hooks/useAvyForecast';
@@ -92,6 +92,8 @@ export function SlopeOverlay({ map }: { map: mapboxgl.Map | null }) {
     };
   }, [map, showSlopeAngle]);
 
+  const [avyExpanded, setAvyExpanded] = useState(false);
+
   if (!showSlopeAngle) return null;
 
   // Legend
@@ -123,28 +125,40 @@ export function SlopeOverlay({ map }: { map: mapboxgl.Map | null }) {
         ))}
       </div>
 
-      {/* Avy problem roses — cross-reference slope angles with problem aspects/elevations */}
+      {/* Avy problem roses — collapsible accordion */}
       {problems.length > 0 && (
         <div className="mt-2 border-t border-white/20 pt-2">
-          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-gray-300">
-            Avy Problem Aspects
-          </div>
-          <div className="space-y-2">
-            {problems.map((p, i) => {
-              const locations = parseLocations(p.location);
-              return (
-                <div key={i} className="flex items-center gap-2">
-                  <AspectElevationRose locations={locations} />
-                  <div className="flex-1">
-                    <p className="text-[10px] font-medium text-white">{p.name}</p>
-                    <p className="text-[9px] text-gray-400">
-                      {p.likelihood} &middot; D{p.size[0]}–D{p.size[1]}
-                    </p>
+          <button
+            onClick={() => setAvyExpanded((v) => !v)}
+            className="flex w-full items-center justify-between text-[10px] font-medium uppercase tracking-wider text-gray-300"
+          >
+            <span>Avy Problems ({problems.length})</span>
+            <svg
+              className={`h-3 w-3 text-gray-400 transition-transform duration-150 ${avyExpanded ? 'rotate-180' : ''}`}
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {avyExpanded && (
+            <div className="mt-1.5 space-y-2">
+              {problems.map((p, i) => {
+                const locations = parseLocations(p.location);
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <AspectElevationRose locations={locations} />
+                    <div className="flex-1">
+                      <p className="text-[10px] font-medium text-white">{p.name}</p>
+                      <p className="text-[9px] text-gray-400">
+                        {p.likelihood} &middot; D{p.size[0]}–D{p.size[1]}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

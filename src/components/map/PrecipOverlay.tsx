@@ -629,7 +629,7 @@ export function PrecipOverlay({ map }: { map: mapboxgl.Map | null }) {
   // Loading / error states
   if (isLoading) {
     return (
-      <div className="absolute bottom-12 left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
+      <div className="absolute bottom-[calc(30dvh+10rem)] left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm md:bottom-12">
         <div className="flex items-center gap-2 text-[11px] text-gray-300">
           <div className="h-3 w-3 animate-spin rounded-full border border-gray-500 border-t-white" />
           Loading weather grid…
@@ -640,7 +640,7 @@ export function PrecipOverlay({ map }: { map: mapboxgl.Map | null }) {
 
   if (isError || !gridData) {
     return (
-      <div className="absolute bottom-12 left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
+      <div className="absolute bottom-[calc(30dvh+10rem)] left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm md:bottom-12">
         <div className="text-[11px] text-red-400">Weather data unavailable</div>
       </div>
     );
@@ -658,7 +658,7 @@ export function PrecipOverlay({ map }: { map: mapboxgl.Map | null }) {
       : null;
 
   return (
-    <div className="absolute bottom-12 left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
+    <div className="absolute bottom-[calc(30dvh+10rem)] left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm md:bottom-12">
       {showPrecip && (
         <>
           {avgFreezingLevel !== null && (

@@ -382,7 +382,9 @@ function ShareButton({ tourName }: { tourName: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleShare = async () => {
-    const url = window.location.href;
+    const shareUrl = new URL(window.location.href);
+    shareUrl.searchParams.set('shared', '1');
+    const url = shareUrl.toString();
     try {
       if (navigator.share) {
         await navigator.share({ title: `Skiii: ${tourName}`, url });

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { TourMap } from '@/components/map/TourMap';
 import { MapControls } from '@/components/map/MapControls';
@@ -10,7 +10,9 @@ import { TourPanel } from '@/components/tour/TourPanel';
 import { SafetyOverlay } from '@/components/ui/SafetyOverlay';
 import { GuidedTour } from '@/components/ui/GuidedTour';
 import { HelpButton } from '@/components/ui/HelpButton';
+import { GuideBubble } from '@/components/ui/GuideBubble';
 import { useMapStore } from '@/stores/map';
+import { useGuideStore } from '@/stores/guide';
 
 function HomeContent() {
   const searchParams = useSearchParams();
@@ -18,14 +20,25 @@ function HomeContent() {
   const selectedForecastHour = useMapStore((s) => s.selectedForecastHour);
   const selectTour = useMapStore((s) => s.selectTour);
   const setSelectedForecastHour = useMapStore((s) => s.setSelectedForecastHour);
+  const setIsSharedView = useGuideStore((s) => s.setIsSharedView);
+  const isSharedView = useGuideStore((s) => s.isSharedView);
+  const dismissGuide = useGuideStore((s) => s.dismissGuide);
+
+  // Track the initial shared tour/hour for navigation detection
+  const initialSharedState = useRef<{ tour: string; hour: number | null } | null>(null);
 
   // Hydrate from URL on mount
   useEffect(() => {
     if (!searchParams) return;
     const tour = searchParams.get('tour');
     const hour = searchParams.get('hour');
+    const shared = searchParams.get('shared');
     if (tour) selectTour(tour);
     if (hour) setSelectedForecastHour(parseInt(hour, 10));
+    if (shared === '1' && tour) {
+      setIsSharedView(true);
+      initialSharedState.current = { tour, hour: hour ? parseInt(hour, 10) : null };
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -40,6 +53,15 @@ function HomeContent() {
     window.history.replaceState(null, '', newUrl);
   }, [selectedTourSlug, selectedForecastHour]);
 
+  // Auto-dismiss guide when user navigates away from the shared tour/hour
+  useEffect(() => {
+    if (!isSharedView || !initialSharedState.current) return;
+    const { tour, hour } = initialSharedState.current;
+    if (selectedTourSlug !== tour || selectedForecastHour !== hour) {
+      dismissGuide();
+    }
+  }, [isSharedView, selectedTourSlug, selectedForecastHour, dismissGuide]);
+
   return (
     <div className="relative flex h-dvh w-full flex-col md:flex-row">
       {/* Map - full screen on mobile, left 60% on desktop */}
@@ -49,6 +71,7 @@ function HomeContent() {
         <MapLoadingIndicator />
         <TimelineOverlay />
         <HelpButton />
+        {isSharedView && <GuideBubble />}
       </main>
 
       {/* Tour panel - bottom sheet on mobile, side panel on desktop */}

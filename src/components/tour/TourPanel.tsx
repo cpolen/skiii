@@ -19,6 +19,8 @@ import { SnowConditionsModal } from '@/components/ui/SnowConditionsModal';
 import type { WeatherForecast } from '@/lib/types/conditions';
 import { kmhToMph, celsiusToFahrenheit, metersToFeet } from '@/lib/types/conditions';
 import { getCurrentHour } from '@/hooks/useWeather';
+// import { useGuideBubble } from '@/hooks/useGuideBubble';
+import { useSharedGuide } from '@/hooks/useSharedGuide';
 import type { Tour } from '@/lib/types/tour';
 
 /** Difficulty levels that have at least one tour (static, computed once). */
@@ -146,6 +148,10 @@ export function TourPanel() {
       return a - b; // stable tiebreaker
     });
   }, [tourConditions, tourFavorableForDay]);
+
+  // Feed the guide bubble with current conditions data
+  // useGuideBubble({ tourConditions, weatherQueries, avyData, sortedTourIndices });
+  useSharedGuide({ tourConditions, weatherQueries, avyData, sortedTourIndices });
 
   // Filter tours by search query and difficulty
   const filteredIndices = useMemo(() => {

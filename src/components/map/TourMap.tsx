@@ -411,7 +411,7 @@ export function TourMap() {
       {mapReady && <RouteEditor map={mapRef.current} />}
       {mapReady && <PrecipOverlay map={mapRef.current} />}
       {/* Right-side legends stacked in a flex column to prevent overlap */}
-      <div className="absolute bottom-10 right-3 z-10 flex flex-col items-end gap-2">
+      <div className="absolute bottom-[calc(30dvh+10rem)] right-3 z-10 flex flex-col items-end gap-2 md:bottom-10">
         {mapReady && (
           <Suspense fallback={null}>
             <SlopeOverlay map={mapRef.current} />
