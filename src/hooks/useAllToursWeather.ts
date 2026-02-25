@@ -17,7 +17,14 @@ export function useAllToursWeather() {
         queryFn: async (): Promise<WeatherForecast> => {
           const res = await fetch(`/api/weather?lat=${lat}&lng=${lng}`);
           if (!res.ok) throw new Error(`Weather fetch failed: ${res.status}`);
-          return res.json();
+          const data = await res.json();
+          // Validate response shape — Open-Meteo can return { error: "..." }
+          // with 200 status on rate-limit, which would crash downstream code
+          // accessing data.hourly[i].time.
+          if (!data.hourly || !Array.isArray(data.hourly) || data.hourly.length === 0) {
+            throw new Error('Weather response missing hourly data');
+          }
+          return data;
         },
         staleTime: 15 * 60 * 1000,
         gcTime: 60 * 60 * 1000,

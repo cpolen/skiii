@@ -326,7 +326,7 @@ export function TourPanel() {
   return (
     <>
       {/* Desktop side panel */}
-      <aside className="hidden md:flex md:h-full md:w-[400px] md:flex-col md:border-l md:border-gray-200 md:bg-white" aria-label="Tour conditions panel">
+      <aside className="hidden md:absolute md:right-0 md:top-0 md:z-30 md:flex md:h-full md:w-[400px] md:flex-col md:border-l md:border-gray-200 md:bg-white" aria-label="Tour conditions panel">
         <div className="border-b border-gray-200 px-4 py-3">
           <h1 className="text-lg font-semibold text-gray-900">Skiii</h1>
           <p className="text-xs text-gray-500">Backcountry Tour Guide - Lake Tahoe</p>

@@ -69,6 +69,14 @@ export async function GET(request: NextRequest) {
     }
 
     const raw = await res.json();
+    // Validate response shape before transforming — Open-Meteo can return
+    // { reason: "...", error: true } with 200 status on rate-limit.
+    if (!raw.hourly || !raw.daily) {
+      return NextResponse.json(
+        { error: 'Open-Meteo returned unexpected response shape' },
+        { status: 502 },
+      );
+    }
     const forecast = transformResponse(raw, latNum, lngNum);
     return NextResponse.json(forecast);
   } catch (err) {

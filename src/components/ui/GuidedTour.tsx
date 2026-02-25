@@ -24,16 +24,14 @@ interface TourStep {
 const STEPS: TourStep[] = [
   {
     target: '[data-tour-step="tour-list"]',
-    mobileTarget: '[data-tour-step="tour-list-mobile"]',
     content:
-      'Tours are ranked by current conditions. The #1 tour has the best score right now. Tap any tour to see its details.',
-    position: 'left',
+      'Tours are ranked by current conditions. The top tour has the best score right now. Tap any card to see its details.',
+    position: 'top',
   },
   {
     target: '[data-tour-step="tour-list"]',
-    mobileTarget: '[data-tour-step="tour-list-mobile"]',
     content: "Let's select this tour to see how conditions look.",
-    position: 'left',
+    position: 'top',
     onNext: () => {
       const { selectTour } = useMapStore.getState();
       const slug = tours[0]?.slug;
@@ -60,7 +58,6 @@ const STEPS: TourStep[] = [
   },
   {
     target: '[data-tour-step="timeline"]',
-    mobileTarget: '[data-tour-step="timeline-mobile"]',
     content:
       "Drag or click the 72-hour timeline to preview conditions at any hour. Green bars are favorable, gray is less ideal. That's the basics — explore and stay safe!",
     position: 'top',

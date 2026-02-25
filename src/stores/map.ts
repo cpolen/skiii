@@ -23,6 +23,15 @@ interface MapState {
   selectedTourSlug: string | null;
   selectedVariantIndex: number;
 
+  // View mode: 'map' = map-first with carousel, 'detail' = tour detail panel open
+  viewMode: 'map' | 'detail';
+
+  // Carousel: index of the centered card (for marker highlighting)
+  activeCarouselIndex: number;
+
+  // Per-tour composite scores for conditions-colored map markers
+  tourScores: Record<string, number>;
+
   // Forecast time selection
   selectedForecastHour: number | null; // hourly index into 72-hour forecast, null = "now"
 
@@ -54,6 +63,9 @@ interface MapState {
   setSelectedForecastHour: (hour: number | null) => void;
   setTopTourSlugs: (slugs: string[]) => void;
   selectTour: (slug: string | null) => void;
+  setViewMode: (mode: 'map' | 'detail') => void;
+  setActiveCarouselIndex: (index: number) => void;
+  setTourScores: (scores: Record<string, number>) => void;
   setSelectedVariantIndex: (idx: number) => void;
   toggleRouteEditor: () => void;
   setLayerLoading: (layer: string, loading: boolean) => void;
@@ -81,6 +93,9 @@ export const useMapStore = create<MapState>((set) => ({
   showHazards: false,
   selectedTourSlug: null,
   selectedVariantIndex: 0,
+  viewMode: 'map',
+  activeCarouselIndex: 0,
+  tourScores: {},
   selectedForecastHour: null,
   topTourSlugs: [],
   layerLoading: {},
@@ -106,12 +121,28 @@ export const useMapStore = create<MapState>((set) => ({
       pitch: !state.show3DTerrain ? 60 : 0,
     })),
   setSelectedForecastHour: (hour) => set({ selectedForecastHour: hour }),
-  setTopTourSlugs: (slugs) => set({ topTourSlugs: slugs }),
+  setTopTourSlugs: (slugs) =>
+    set((state) => {
+      // Avoid creating new state when slugs haven't changed (e.g. repeated [] calls)
+      if (state.topTourSlugs.length === slugs.length &&
+          state.topTourSlugs.every((s, i) => s === slugs[i])) return state;
+      return { topTourSlugs: slugs };
+    }),
   selectTour: (slug) =>
-    set((state) => slug
-      ? { selectedTourSlug: slug, selectedVariantIndex: 0, isEditingRoute: false, editingCoordinates: null }
-      : { selectedTourSlug: null, selectedVariantIndex: 0, isEditingRoute: false, editingCoordinates: null, center: TAHOE_CENTER, zoom: DEFAULT_ZOOM, pitch: state.show3DTerrain ? 60 : 0, bearing: 0 },
+    set(() => slug
+      ? { selectedTourSlug: slug, selectedVariantIndex: 0, viewMode: 'detail' as const, isEditingRoute: false, editingCoordinates: null }
+      : { selectedTourSlug: null, selectedVariantIndex: 0, viewMode: 'map' as const, isEditingRoute: false, editingCoordinates: null },
     ),
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setActiveCarouselIndex: (index) => set({ activeCarouselIndex: index }),
+  setTourScores: (scores) =>
+    set((state) => {
+      const prev = state.tourScores;
+      const keys = Object.keys(scores);
+      if (keys.length === Object.keys(prev).length &&
+          keys.every((k) => prev[k] === scores[k])) return state;
+      return { tourScores: scores };
+    }),
   setSelectedVariantIndex: (idx) => set({ selectedVariantIndex: idx }),
   toggleRouteEditor: () =>
     set((state) => {
@@ -126,9 +157,10 @@ export const useMapStore = create<MapState>((set) => ({
       };
     }),
   setLayerLoading: (layer, loading) =>
-    set((state) => ({
-      layerLoading: { ...state.layerLoading, [layer]: loading },
-    })),
+    set((state) => {
+      if (state.layerLoading[layer] === loading) return state; // no change
+      return { layerLoading: { ...state.layerLoading, [layer]: loading } };
+    }),
   setEditingCoordinates: (coords) => set({ editingCoordinates: coords }),
   setEditingVariantIndex: (idx) => set({ editingVariantIndex: idx }),
 }));

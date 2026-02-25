@@ -95,7 +95,13 @@ async function fetchBatch(
   }
 
   const raw = await res.json();
-  return Array.isArray(raw) ? raw : [raw];
+  const results = Array.isArray(raw) ? raw : [raw];
+  // Validate each result has the expected hourly shape — Open-Meteo can
+  // return { reason: "...", error: true } with 200 status on rate-limit.
+  for (const r of results) {
+    if (!r.hourly) throw new Error('Open-Meteo returned unexpected response shape');
+  }
+  return results;
 }
 
 export async function GET(request: Request) {

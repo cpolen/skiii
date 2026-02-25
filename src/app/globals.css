@@ -54,6 +54,22 @@ body {
   display: none;
 }
 
+/* Panel slide-in animations for TourDetailPanel */
+@keyframes slide-in-from-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-in-from-bottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-in.slide-in-from-right {
+  animation: slide-in-from-right 0.3s ease-out;
+}
+.animate-in.slide-in-from-bottom {
+  animation: slide-in-from-bottom 0.3s ease-out;
+}
+
 /* Edge fade gradients for scrollable timeline — hints at scrollability */
 .timeline-fade::before,
 .timeline-fade::after {

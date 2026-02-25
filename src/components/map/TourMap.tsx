@@ -1,8 +1,9 @@
 'use client';
 
-import { useRef, useEffect, useCallback, useState, lazy, Suspense } from 'react';
+import { useRef, useEffect, useCallback, useState, lazy, Suspense, memo } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
+import { useShallow } from 'zustand/react/shallow';
 import { tours } from '@/data/tours';
 import { TourRoute } from './TourRoute';
 import { RouteEditor } from './RouteEditor';
@@ -19,12 +20,15 @@ const TreeCoverOverlay = lazy(() => import('./TreeCoverOverlay').then((m) => ({ 
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
-const DIFFICULTY_COLORS: Record<string, string> = {
-  beginner: '#50B848',
-  intermediate: '#3B82F6',
-  advanced: '#F7941E',
-  expert: '#ED1C24',
-};
+/** Conditions score color thresholds (Surfline-inspired traffic light system).
+ *  Score -1 means "loading" and renders as neutral gray. */
+const SCORE_COLORS = {
+  gray: '#9CA3AF',    // < 20 or loading
+  red: '#EF4444',     // 20-39
+  orange: '#F7941E',  // 40-59
+  yellow: '#EAB308',  // 60-79
+  green: '#16A34A',   // >= 80
+} as const;
 
 /** Bounding box that contains all tour marker positions. */
 function getTourMarkerBounds(): mapboxgl.LngLatBounds {
@@ -42,8 +46,8 @@ function getTourMarkerBounds(): mapboxgl.LngLatBounds {
 /** Build a GeoJSON FeatureCollection from tour trailheads.
  *  Uses the first coordinate of the primary route as the marker position
  *  so it always matches the route start, falling back to the trailhead field.
- *  `topSlugs` adds a `rank` property (1/2/3) for the top-ranked tours. */
-function buildMarkerGeoJSON(topSlugs: string[] = []): GeoJSON.FeatureCollection {
+ *  `scores` maps tour slug to composite conditions score (0-100, or -1 for loading). */
+function buildMarkerGeoJSON(scores: Record<string, number> = {}): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: tours.map((tour) => {
@@ -54,7 +58,6 @@ function buildMarkerGeoJSON(topSlugs: string[] = []): GeoJSON.FeatureCollection 
         ? { type: 'Point' as const, coordinates: [firstCoord[0], firstCoord[1]] }
         : tour.trailhead.geometry;
 
-      const rankIdx = topSlugs.indexOf(tour.slug);
       return {
         type: 'Feature' as const,
         geometry,
@@ -62,36 +65,77 @@ function buildMarkerGeoJSON(topSlugs: string[] = []): GeoJSON.FeatureCollection 
           slug: tour.slug,
           name: tour.name,
           difficulty: tour.difficulty,
-          rank: rankIdx >= 0 ? rankIdx + 1 : 0, // 1, 2, 3, or 0 (unranked)
+          score: scores[tour.slug] ?? -1, // -1 = loading/unknown
         },
       };
     }),
   };
 }
 
-export function TourMap() {
+export const TourMap = memo(function TourMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
-  const { center, zoom, pitch, bearing, show3DTerrain, showAvyZones } =
-    useMapStore();
-  const setCenter = useMapStore((s) => s.setCenter);
-  const setZoom = useMapStore((s) => s.setZoom);
-  const setPitch = useMapStore((s) => s.setPitch);
-  const setBearing = useMapStore((s) => s.setBearing);
+  // Only subscribe to the values TourMap actually reacts to.
+  // Previously this used useMapStore() (no selector), which re-rendered TourMap
+  // on EVERY store change (layerLoading, selectedForecastHour, etc.) —
+  // cascading through every child map component on unrelated state changes.
+  const { show3DTerrain, showAvyZones } = useMapStore(
+    useShallow((s) => ({ show3DTerrain: s.show3DTerrain, showAvyZones: s.showAvyZones })),
+  );
   const selectTour = useMapStore((s) => s.selectTour);
   const selectedTourSlug = useMapStore((s) => s.selectedTourSlug);
-  const topTourSlugs = useMapStore((s) => s.topTourSlugs);
+  const tourScores = useMapStore((s) => s.tourScores);
+
+  // Get the geographic coordinate at the blue "location" dot's pixel position.
+  // The dot is centered in the visible map area (above the bottom overlay),
+  // not at the true viewport center. We use map.unproject() to find the
+  // geographic point at that pixel so the carousel sort matches the dot.
+  const getLocationCenter = useCallback((): [number, number] => {
+    const map = mapRef.current!;
+    const h = map.getContainer().clientHeight;
+    const w = map.getContainer().clientWidth;
+    // The dot is centered with pb-[220px], so its y = (h - 220) / 2
+    const dotY = (h - 220) / 2;
+    const geo = map.unproject([w / 2, dotY]);
+    return [geo.lng, geo.lat];
+  }, []);
+
+  // Sync center on every move (throttled) so the carousel stays sorted
+  // during inertial panning, not just after moveend fires.
+  // Throttled at 400ms to balance carousel responsiveness vs render pressure
+  // (150ms was ~7 renders/sec, causing instability during sustained panning).
+  const moveCenterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMove = useCallback(() => {
+    if (moveCenterTimer.current) return; // throttle: max once per 400ms
+    moveCenterTimer.current = setTimeout(() => {
+      moveCenterTimer.current = null;
+      if (!mapRef.current) return;
+      try {
+        useMapStore.setState({ center: getLocationCenter() });
+      } catch {
+        // map.unproject can fail if the container is in an unusual state
+        // during rapid panning — silently skip; next tick retries
+      }
+    }, 400);
+  }, [getLocationCenter]);
 
   const handleMoveEnd = useCallback(() => {
     if (!mapRef.current) return;
-    const mapCenter = mapRef.current.getCenter();
-    setCenter([mapCenter.lng, mapCenter.lat]);
-    setZoom(mapRef.current.getZoom());
-    setPitch(mapRef.current.getPitch());
-    setBearing(mapRef.current.getBearing());
-  }, [setCenter, setZoom, setPitch, setBearing]);
+    // Clear any pending throttle so we commit the final position immediately
+    if (moveCenterTimer.current) {
+      clearTimeout(moveCenterTimer.current);
+      moveCenterTimer.current = null;
+    }
+    // Batch into a single store update instead of 4 separate set() calls
+    useMapStore.setState({
+      center: getLocationCenter(),
+      zoom: mapRef.current.getZoom(),
+      pitch: mapRef.current.getPitch(),
+      bearing: mapRef.current.getBearing(),
+    });
+  }, [getLocationCenter]);
 
   // Initialize map
   useEffect(() => {
@@ -100,13 +144,16 @@ export function TourMap() {
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
+    // Read viewport once at init — no need to subscribe to these values
+    const initState = useMapStore.getState();
+
     const newMap = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/outdoors-v12',
-      center,
-      zoom,
-      pitch,
-      bearing,
+      center: initState.center,
+      zoom: initState.zoom,
+      pitch: initState.pitch,
+      bearing: initState.bearing,
       maxBounds: [
         [-121.5, 38.0],
         [-119.0, 40.0],
@@ -119,6 +166,7 @@ export function TourMap() {
       'bottom-left',
     );
 
+    newMap.on('move', handleMove);
     newMap.on('moveend', handleMoveEnd);
 
     newMap.on('load', () => {
@@ -136,28 +184,44 @@ export function TourMap() {
         data: buildMarkerGeoJSON(),
       });
 
+      // Tour markers — colored by conditions score (Surfline traffic-light pattern)
       newMap.addLayer({
         id: 'tour-markers-layer',
         type: 'circle',
         source: 'tour-markers',
         paint: {
-          'circle-radius': 8,
+          'circle-radius': 9,
           'circle-color': [
-            'match',
-            ['get', 'difficulty'],
-            'beginner',
-            DIFFICULTY_COLORS.beginner,
-            'intermediate',
-            DIFFICULTY_COLORS.intermediate,
-            'advanced',
-            DIFFICULTY_COLORS.advanced,
-            'expert',
-            DIFFICULTY_COLORS.expert,
-            '#3B82F6',
+            'step',
+            ['get', 'score'],
+            SCORE_COLORS.gray,   // score < 0 (loading) → gray
+            0, SCORE_COLORS.gray,  // 0-19 → gray
+            20, SCORE_COLORS.red,  // 20-39 → red
+            40, SCORE_COLORS.orange, // 40-59 → orange
+            60, SCORE_COLORS.yellow, // 60-79 → yellow
+            80, SCORE_COLORS.green,  // 80+ → green
           ],
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 2.5,
           'circle-opacity': 1,
+        },
+      });
+
+      // Score badge — shows the composite score number inside each marker
+      newMap.addLayer({
+        id: 'tour-score-badges',
+        type: 'symbol',
+        source: 'tour-markers',
+        filter: ['>=', ['get', 'score'], 0],
+        layout: {
+          'text-field': ['to-string', ['get', 'score']],
+          'text-size': 9,
+          'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: {
+          'text-color': '#ffffff',
         },
       });
 
@@ -177,24 +241,6 @@ export function TourMap() {
           'text-color': '#1f2937',
           'text-halo-color': '#ffffff',
           'text-halo-width': 1.5,
-        },
-      });
-
-      // Rank badge — shows "1", "2", "3" on top-ranked markers
-      newMap.addLayer({
-        id: 'tour-rank-badges',
-        type: 'symbol',
-        source: 'tour-markers',
-        filter: ['>', ['get', 'rank'], 0],
-        layout: {
-          'text-field': ['to-string', ['get', 'rank']],
-          'text-size': 10,
-          'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
-          'text-allow-overlap': true,
-          'text-ignore-placement': true,
-        },
-        paint: {
-          'text-color': '#ffffff',
         },
       });
 
@@ -223,99 +269,66 @@ export function TourMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fit all tour markers in the visible area when no tour is selected.
-  // On mobile the bottom sheet covers ~45% of the viewport, so we use heavy
-  // bottom padding so markers sit above the drawer.
+  // Fit all tour markers on initial load only (not when returning from detail view).
   const prevSlugRef = useRef<string | null>(null);
   useEffect(() => {
     const wasSelected = prevSlugRef.current;
     prevSlugRef.current = selectedTourSlug;
 
-    if (!selectedTourSlug && mapRef.current) {
+    // Only fit bounds on initial load — skip when returning from a selected tour
+    // so the user's map position is preserved.
+    if (!selectedTourSlug && !wasSelected && mapRef.current) {
       const isMobile = window.innerWidth < 768;
-      const animate = !!wasSelected;
-
       mapRef.current.fitBounds(getTourMarkerBounds(), {
         padding: isMobile
-          ? { top: 60, bottom: Math.round(window.innerHeight * 0.55), left: 30, right: 30 }
-          : { top: 60, bottom: 60, left: 60, right: 60 },
+          ? { top: 60, bottom: 260, left: 30, right: 30 }
+          : { top: 60, bottom: 200, left: 60, right: 60 },
         pitch: show3DTerrain ? 60 : 0,
         bearing: 0,
         maxZoom: 9.5,
-        duration: animate ? 1200 : 0,
+        duration: 0,
         essential: true,
       });
     }
   }, [selectedTourSlug, show3DTerrain, mapReady]);
 
-  // Refs so the styledata handler always reads fresh values (no stale closures)
-  const topSlugsRef = useRef<string[]>([]);
+  // Refs for styledata handler (avoids stale closures)
+  const tourScoresRef = useRef<Record<string, number>>({});
   const selectedSlugRef = useRef<string | null>(null);
-  useEffect(() => { topSlugsRef.current = topTourSlugs; }, [topTourSlugs]);
+  useEffect(() => { tourScoresRef.current = tourScores; }, [tourScores]);
   useEffect(() => { selectedSlugRef.current = selectedTourSlug; }, [selectedTourSlug]);
 
-  // Apply marker paint properties + GeoJSON rank data
+  // Update marker GeoJSON data and paint when scores or selection change
   const applyMarkerStyles = useCallback(() => {
     const map = mapRef.current;
     if (!map || !map.getLayer('tour-markers-layer')) return;
 
-    const slugs = topSlugsRef.current;
+    const scores = tourScoresRef.current;
     const selected = selectedSlugRef.current;
 
-    // Update GeoJSON source with current rank data
+    // Update GeoJSON source with current score data
     const source = map.getSource('tour-markers') as mapboxgl.GeoJSONSource | undefined;
     if (source) {
-      source.setData(buildMarkerGeoJSON(slugs));
+      source.setData(buildMarkerGeoJSON(scores));
     }
 
-    const hasRanking = slugs.length > 0;
-
-    // Circle radius: selected=12, ranked=11, default=8
+    // Enlarge selected marker
     map.setPaintProperty('tour-markers-layer', 'circle-radius', [
       'case',
       ['==', ['get', 'slug'], selected ?? ''],
       12,
-      ['>', ['get', 'rank'], 0],
-      11,
-      8,
+      9,
     ]);
 
-    // Circle color: gold/silver/bronze for ranked, difficulty color otherwise
-    if (hasRanking) {
-      map.setPaintProperty('tour-markers-layer', 'circle-color', [
-        'case',
-        ['==', ['get', 'rank'], 1], '#EAB308', // gold
-        ['==', ['get', 'rank'], 2], '#9CA3AF', // silver
-        ['==', ['get', 'rank'], 3], '#D97706', // bronze
-        '#D1D5DB', // unranked dim
-      ]);
-      map.setPaintProperty('tour-markers-layer', 'circle-opacity', [
-        'case',
-        ['>', ['get', 'rank'], 0], 1,
-        0.5,
-      ]);
-      map.setPaintProperty('tour-markers-layer', 'circle-stroke-width', [
-        'case',
-        ['>', ['get', 'rank'], 0], 3,
-        2,
-      ]);
-    } else {
-      // Restore default difficulty-based colors
-      map.setPaintProperty('tour-markers-layer', 'circle-color', [
-        'match',
-        ['get', 'difficulty'],
-        'beginner', DIFFICULTY_COLORS.beginner,
-        'intermediate', DIFFICULTY_COLORS.intermediate,
-        'advanced', DIFFICULTY_COLORS.advanced,
-        'expert', DIFFICULTY_COLORS.expert,
-        '#3B82F6',
-      ]);
-      map.setPaintProperty('tour-markers-layer', 'circle-opacity', 1);
-      map.setPaintProperty('tour-markers-layer', 'circle-stroke-width', 2.5);
-    }
+    map.setPaintProperty('tour-markers-layer', 'circle-stroke-width', [
+      'case',
+      ['==', ['get', 'slug'], selected ?? ''],
+      3.5,
+      2.5,
+    ]);
   }, []);
 
-  // Register styledata listener once when map is ready — reads from refs so always fresh
+  // Register styledata listener once when map is ready
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -323,20 +336,27 @@ export function TourMap() {
     return () => { map.off('styledata', applyMarkerStyles); };
   }, [mapReady, applyMarkerStyles]);
 
-  // Apply immediately when ranking or selection changes
+  // Apply immediately when scores or selection change
   useEffect(() => {
     applyMarkerStyles();
-  }, [selectedTourSlug, topTourSlugs, applyMarkerStyles]);
+  }, [selectedTourSlug, tourScores, applyMarkerStyles]);
 
-  // Toggle 3D terrain
+  // Toggle 3D terrain.
+  // On mount, only configure the terrain source — skip the easeTo animation
+  // so it doesn't cancel TourRoute's fitBounds (which runs first as a child effect).
+  // Subsequent user-initiated toggles animate normally.
+  const terrainMountRef = useRef(true);
   useEffect(() => {
     if (!mapRef.current?.isStyleLoaded()) return;
+    const isMount = terrainMountRef.current;
+    terrainMountRef.current = false;
+
     if (show3DTerrain) {
       mapRef.current.setTerrain({ source: 'mapbox-terrain', exaggeration: 1.2 });
-      mapRef.current.easeTo({ pitch: 60, duration: 1000 });
+      if (!isMount) mapRef.current.easeTo({ pitch: 60, duration: 1000 });
     } else {
       mapRef.current.setTerrain(null);
-      mapRef.current.easeTo({ pitch: 0, duration: 1000 });
+      if (!isMount) mapRef.current.easeTo({ pitch: 0, duration: 1000 });
     }
   }, [show3DTerrain]);
 
@@ -410,8 +430,8 @@ export function TourMap() {
       {mapReady && <TourRoute map={mapRef.current} />}
       {mapReady && <RouteEditor map={mapRef.current} />}
       {mapReady && <PrecipOverlay map={mapRef.current} />}
-      {/* Right-side legends stacked in a flex column to prevent overlap */}
-      <div className="absolute bottom-[calc(30dvh+10rem)] right-3 z-10 flex flex-col items-end gap-2 md:bottom-10">
+      {/* Right-side legends stacked above carousel/timeline */}
+      <div className="absolute bottom-64 right-3 z-10 flex flex-col items-end gap-2 md:bottom-52">
         {mapReady && (
           <Suspense fallback={null}>
             <SlopeOverlay map={mapRef.current} />
@@ -425,4 +445,4 @@ export function TourMap() {
       {mapReady && <HazardOverlay map={mapRef.current} />}
     </>
   );
-}
+});

@@ -122,22 +122,33 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
   const [centerIndex, setCenterIndex] = useState(nowIndex);
   const [committed, setCommitted] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const committedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipCommitRef = useRef(false);
 
-  // On mount, scroll to the selected hour (if any) or "now".
+  // Clean up any pending timers on unmount to prevent post-unmount setState
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
+    };
+  }, []);
+
+  // On mount, scroll to the selected hour (if any) or "now", and auto-select "now".
   // The leading spacer is (50% - CELL_W/2), so scrollLeft = index * CELL_STRIDE centers that cell.
+  // Clamp to nowIndex so a stale selectedHour from a shared URL can't start in the past.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // Skip the commit that this programmatic scroll would trigger —
-    // we don't want to change selectedForecastHour from null on mount,
-    // because that would cancel the in-flight "now" grid data fetch.
-    skipCommitRef.current = true;
-    const target = selectedHour != null ? selectedHour : nowIndex;
+    const target = selectedHour != null ? Math.max(selectedHour, nowIndex) : nowIndex;
     // Use rAF to ensure children are laid out before setting scroll position
     requestAnimationFrame(() => {
       el.scrollLeft = target * CELL_STRIDE;
     });
+    // Auto-select "now" so the center block appears highlighted by default
+    if (selectedHour == null) {
+      lastCommittedHourRef.current = nowIndex;
+      onSelectHourRef.current(nowIndex);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -146,17 +157,19 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
   const lastCommittedHourRef = useRef<number | null>(selectedHour);
 
   // When selectedHour changes externally (e.g. Corn/Powder pill), scroll to it.
+  // Clamp to nowIndex so external sources can't move the timeline into the past.
   useEffect(() => {
     if (selectedHour === lastCommittedHourRef.current) return;
     lastCommittedHourRef.current = selectedHour;
     const el = scrollRef.current;
     if (!el) return;
-    const target = selectedHour != null ? selectedHour : nowIndex;
+    const target = selectedHour != null ? Math.max(selectedHour, nowIndex) : nowIndex;
     skipCommitRef.current = true;
     el.scrollTo({ left: target * CELL_STRIDE, behavior: 'smooth' });
     setCenterIndex(target);
     setCommitted(true);
-    setTimeout(() => setCommitted(false), 300);
+    if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
+    committedTimerRef.current = setTimeout(() => setCommitted(false), 300);
   }, [selectedHour, nowIndex]);
 
   // Keep a ref to onSelectHour so callbacks always call the latest version
@@ -164,24 +177,32 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
   onSelectHourRef.current = onSelectHour;
 
   // Commit: snap to nearest cell, update Zustand store, trigger pulse
+  // Clamp to nowIndex so the user can never commit a past hour.
   const commitSelection = useCallback(() => {
     if (skipCommitRef.current) { skipCommitRef.current = false; return; }
     const el = scrollRef.current;
     if (!el) return;
-    const idx = Math.max(0, Math.min(hours.length - 1, Math.round(el.scrollLeft / CELL_STRIDE)));
+    const idx = Math.max(nowIndex, Math.min(hours.length - 1, Math.round(el.scrollLeft / CELL_STRIDE)));
     el.scrollLeft = idx * CELL_STRIDE; // snap to exact cell boundary
     setCenterIndex(idx);
     lastCommittedHourRef.current = idx;
     onSelectHourRef.current(idx);
     setCommitted(true);
-    setTimeout(() => setCommitted(false), 300);
-  }, [hours.length]);
+    if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
+    committedTimerRef.current = setTimeout(() => setCommitted(false), 300);
+  }, [hours.length, nowIndex]);
 
-  // Scroll handler: update label immediately, schedule commit via debounce fallback
+  // Scroll handler: update label immediately, schedule commit via debounce fallback.
+  // Clamp scroll position so the user can never scroll before "now".
   const onTimelineScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    const idx = Math.max(0, Math.min(hours.length - 1, Math.round(el.scrollLeft / CELL_STRIDE)));
+    const minScroll = nowIndex * CELL_STRIDE;
+    if (el.scrollLeft < minScroll) {
+      el.scrollLeft = minScroll;
+      return;
+    }
+    const idx = Math.max(nowIndex, Math.min(hours.length - 1, Math.round(el.scrollLeft / CELL_STRIDE)));
     setCenterIndex(idx);
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
