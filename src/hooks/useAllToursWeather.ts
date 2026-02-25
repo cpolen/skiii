@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import type { WeatherForecast } from '@/lib/types/conditions';
 import { tours } from '@/data/tours';
@@ -7,9 +8,13 @@ import { tours } from '@/data/tours';
  * Uses the same queryKey format as useWeather (['weather', lat, lng])
  * so data is shared: when a user later selects a tour, useWeather()
  * finds the data already cached — zero additional fetches.
+ *
+ * The returned array is referentially stable — it only changes when
+ * data or loading states actually change, preventing the cascade of
+ * useMemo invalidations in TourPanel that was causing periodic "refreshes".
  */
 export function useAllToursWeather() {
-  return useQueries({
+  const queries = useQueries({
     queries: tours.map((tour) => {
       const [lng, lat] = tour.trailhead.geometry.coordinates as [number, number];
       return {
@@ -31,4 +36,15 @@ export function useAllToursWeather() {
       };
     }),
   });
+
+  // useQueries() returns a new array reference on every render, which
+  // invalidates all downstream useMemo hooks in TourPanel. Stabilize by
+  // only updating the reference when actual data or initial-load state changes.
+  // Deliberately exclude isFetching — background refetches shouldn't cascade
+  // through every downstream useMemo and cause visible "refreshes".
+  const fingerprint = queries
+    .map((q) => `${q.dataUpdatedAt}:${q.isLoading}`)
+    .join('|');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => queries, [fingerprint]);
 }

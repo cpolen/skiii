@@ -117,8 +117,13 @@ export function assessHour(
 
   // Freezing level vs tour elevation — rain-on-snow risk
   if (freezingLevelFt > tourMinElev && hour.precipitation > 0) {
-    score -= 3;
-    reasons.push(`Rain-on-snow risk — freezing level ${freezingLevelFt.toLocaleString()}'`);
+    if (hour.precipitation <= 1) {
+      score -= 1;
+      reasons.push(`Light rain-on-snow risk — freezing level ${freezingLevelFt.toLocaleString()}'`);
+    } else {
+      score -= 3;
+      reasons.push(`Rain-on-snow risk — freezing level ${freezingLevelFt.toLocaleString()}'`);
+    }
   }
 
   // Visibility

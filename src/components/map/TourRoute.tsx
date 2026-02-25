@@ -200,10 +200,14 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
           new mapboxgl.LngLatBounds([allCoords[0][0], allCoords[0][1]], [allCoords[0][0], allCoords[0][1]]),
         );
         const isMobile = window.innerWidth < 768;
+        // Include pitch so the single fitBounds animation handles both position
+        // and pitch — avoids a competing easeTo from the terrain effect.
+        const pitch = useMapStore.getState().show3DTerrain ? 60 : 0;
         map!.fitBounds(bounds, {
           padding: isMobile
             ? { top: 60, bottom: Math.round(window.innerHeight * 0.55), left: 40, right: 40 }
             : 80,
+          pitch,
           maxZoom: 14,
           duration: 1200,
           essential: true,
@@ -211,16 +215,20 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    // Apply immediately if style is loaded, otherwise wait for it
+    // Apply immediately if style is loaded, otherwise wait for next styledata.
+    // NOTE: uses 'styledata' (not 'load') because 'load' only fires once during
+    // map init. If this effect re-runs after the map already loaded and
+    // isStyleLoaded() is temporarily false (e.g. during tile/terrain loading),
+    // 'load' would never fire again, leaving the route un-drawn.
     if (map.isStyleLoaded()) {
       apply();
     } else {
-      map.once('load', apply);
+      map.once('styledata', apply);
     }
 
     return () => {
       try {
-        map.off('load', apply);
+        map.off('styledata', apply);
         removeAll(map);
       } catch {
         // Map may already be removed during page navigation

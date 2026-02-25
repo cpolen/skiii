@@ -13,8 +13,9 @@ const OPEN_METEO_BASE = process.env.OPEN_METEO_API_KEY
  * Query params:
  *   latMin, latMax, lngMin, lngMax — bounding box
  *   step — grid spacing in degrees (default 0.005 ≈ 550m)
- *   hour — optional hourly index (0-71) into the 72-hour forecast.
- *          When absent, uses the current hour.
+ *   hour — optional hourly index (0-143) into the 144-hour array
+ *          (3 past days + 3 forecast days). When absent, uses the
+ *          current hour.
  *
  * Falls back to a coarse full-map grid when no bbox is provided.
  */
@@ -80,7 +81,7 @@ async function fetchBatch(
   url.searchParams.set('latitude', batchLats.join(','));
   url.searchParams.set('longitude', batchLngs.join(','));
   url.searchParams.set('hourly', 'precipitation,snowfall,freezing_level_height,wind_speed_10m,wind_speed_80m,wind_direction_10m,snow_depth');
-  url.searchParams.set('past_days', '2');
+  url.searchParams.set('past_days', '3');
   url.searchParams.set('forecast_days', '3');
   url.searchParams.set('timezone', 'America/Los_Angeles');
 
@@ -129,7 +130,7 @@ export async function GET(request: Request) {
 
   const { lats, lngs } = buildGridCoords(latMin, latMax, lngMin, lngMax, step);
 
-  // Optional hour index (0-47) — when provided, return that forecast hour
+  // Optional hour index (0-143) — when provided, return that hour
   // instead of the current hour
   const hourParam = searchParams.get('hour');
   const requestedHour = hourParam != null ? parseInt(hourParam, 10) : null;
@@ -151,14 +152,12 @@ export async function GET(request: Request) {
       const times = hourly.time as string[];
       const snowfallArr = hourly.snowfall as number[];
 
-      // With past_days=2 + forecast_days=3, we have 120 hours.
-      // The first ~48 are past, the rest are forecast.
-      // The `hour` param (0-71) refers to forecast-relative indices,
-      // so we offset by the number of past hours (48).
-      const PAST_HOURS = 48;
+      // With past_days=3 + forecast_days=3, we have 144 hours — matching
+      // the main weather API. `selectedForecastHour` is a direct index
+      // into this 144-hour array, so no offset is needed.
       const currentIdx = findCurrentHourIndex(times);
       const idx = requestedHour != null && requestedHour >= 0
-        ? Math.min(requestedHour + PAST_HOURS, times.length - 1)
+        ? Math.min(requestedHour, times.length - 1)
         : currentIdx;
 
       // Sum snowfall over the 48 hours ending at `idx`

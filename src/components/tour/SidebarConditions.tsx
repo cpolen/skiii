@@ -497,6 +497,7 @@ function deduplicateReasons(
     const sev = priority[w.favorability] ?? 0;
     for (const r of w.reasons) {
       if (r.includes('Nighttime')) continue;
+      if (r === 'Dry' || r === 'Light winds') continue;
       const cat = reasonCategory(r);
       const existing = byCategory.get(cat);
       if (!existing || sev > existing.severity) {

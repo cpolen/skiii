@@ -352,84 +352,96 @@ export function RouteWeatherDots({ map }: { map: mapboxgl.Map | null }) {
         map!.addImage('wind-arrow', data, { sdf: true });
       }
 
-      // Ensure these layers are always on top — remove and re-add if they exist
-      // so toggling other overlays doesn't bury them
-      for (const id of ALL_LAYERS) {
-        if (map!.getLayer(id)) map!.removeLayer(id);
-      }
+      // Update source data (or create sources if they don't exist yet).
+      // Layers are added only once; subsequent updates just swap the source data
+      // so the map doesn't flash from layer removal/re-addition.
+      addOrUpdateSource(map!, DOTS_SOURCE, dotsGeoJSON);
+      addOrUpdateSource(map!, LABELS_SOURCE, labelsGeoJSON);
+      addOrUpdateSource(map!, ARROWS_SOURCE, arrowsGeoJSON);
 
       // --- Dot circles ---
-      addOrUpdateSource(map!, DOTS_SOURCE, dotsGeoJSON);
-      map!.addLayer({
-        id: DOTS_LAYER,
-        type: 'circle',
-        source: DOTS_SOURCE,
-        paint: {
-          'circle-radius': 4,
-          'circle-color': '#ffffff',
-          'circle-stroke-color': '#1e3a5f',
-          'circle-stroke-width': 1.5,
-        },
-      });
-
-      // --- Wind direction arrows (hidden when grid wind overlay is active to avoid conflicting arrows) ---
-      if (!showWind) {
-        addOrUpdateSource(map!, ARROWS_SOURCE, arrowsGeoJSON);
+      // minzoom prevents route weather data from showing at overview zoom levels
+      // where it would be unreadable and confusing (e.g. if fitBounds hasn't fired yet)
+      if (!map!.getLayer(DOTS_LAYER)) {
         map!.addLayer({
-          id: ARROWS_LAYER,
-          type: 'symbol',
-          source: ARROWS_SOURCE,
-          layout: {
-            'icon-image': 'wind-arrow',
-            'icon-size': 0.45,
-            'icon-rotation-alignment': 'map',
-            // Arrow points in the direction wind blows TO (from + 180)
-            'icon-rotate': ['+', ['get', 'wind_direction'], 180],
-            'icon-allow-overlap': true,
-            'icon-ignore-placement': true,
-            'icon-offset': [-20, 0],
-            'icon-anchor': 'right',
-          },
+          id: DOTS_LAYER,
+          type: 'circle',
+          source: DOTS_SOURCE,
+          minzoom: 10.5,
           paint: {
-            'icon-color': [
-              'interpolate',
-              ['linear'],
-              ['get', 'wind_mph'],
-              0, '#93C5FD',   // blue-300 — calm
-              10, '#3B82F6',  // blue-500 — light
-              15, '#F59E0B',  // amber-500 — moderate
-              25, '#EF4444',  // red-500 — strong
-              40, '#991B1B',  // red-800 — extreme
-            ],
-            'icon-halo-color': 'rgba(255,255,255,0.7)',
-            'icon-halo-width': 1,
+            'circle-radius': 4,
+            'circle-color': '#ffffff',
+            'circle-stroke-color': '#1e3a5f',
+            'circle-stroke-width': 1.5,
           },
         });
       }
 
+      // --- Wind direction arrows (hidden when grid wind overlay is active to avoid conflicting arrows) ---
+      if (!showWind) {
+        if (!map!.getLayer(ARROWS_LAYER)) {
+          map!.addLayer({
+            id: ARROWS_LAYER,
+            type: 'symbol',
+            source: ARROWS_SOURCE,
+            minzoom: 10.5,
+            layout: {
+              'icon-image': 'wind-arrow',
+              'icon-size': 0.45,
+              'icon-rotation-alignment': 'map',
+              // Arrow points in the direction wind blows TO (from + 180)
+              'icon-rotate': ['+', ['get', 'wind_direction'], 180],
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true,
+              'icon-offset': [-20, 0],
+              'icon-anchor': 'right',
+            },
+            paint: {
+              'icon-color': [
+                'interpolate',
+                ['linear'],
+                ['get', 'wind_mph'],
+                0, '#93C5FD',   // blue-300 — calm
+                10, '#3B82F6',  // blue-500 — light
+                15, '#F59E0B',  // amber-500 — moderate
+                25, '#EF4444',  // red-500 — strong
+                40, '#991B1B',  // red-800 — extreme
+              ],
+              'icon-halo-color': 'rgba(255,255,255,0.7)',
+              'icon-halo-width': 1,
+            },
+          });
+        }
+      } else if (map!.getLayer(ARROWS_LAYER)) {
+        // Wind overlay active — hide route-level arrows to avoid conflict
+        map!.removeLayer(ARROWS_LAYER);
+      }
+
       // --- Text labels (precip + temp + wind) ---
-      addOrUpdateSource(map!, LABELS_SOURCE, labelsGeoJSON);
-      map!.addLayer({
-        id: LABELS_LAYER,
-        type: 'symbol',
-        source: LABELS_SOURCE,
-        layout: {
-          'text-field': ['get', 'label'],
-          'text-size': 14,
-          'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
-          'text-anchor': 'left',
-          'text-offset': [1, 0],
-          'text-allow-overlap': true,
-          'text-ignore-placement': true,
-          'text-padding': 4,
-          'text-max-width': 20,
-        },
-        paint: {
-          'text-color': '#ffffff',
-          'text-halo-color': 'rgba(30,58,95,0.9)',
-          'text-halo-width': 1.5,
-        },
-      });
+      if (!map!.getLayer(LABELS_LAYER)) {
+        map!.addLayer({
+          id: LABELS_LAYER,
+          type: 'symbol',
+          source: LABELS_SOURCE,
+          minzoom: 10.5,
+          layout: {
+            'text-field': ['get', 'label'],
+            'text-size': 14,
+            'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+            'text-anchor': 'left',
+            'text-offset': [1, 0],
+            'text-allow-overlap': true,
+            'text-ignore-placement': true,
+            'text-padding': 4,
+            'text-max-width': 20,
+          },
+          paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(30,58,95,0.9)',
+            'text-halo-width': 1.5,
+          },
+        });
+      }
     }
 
     if (map.isStyleLoaded()) {
