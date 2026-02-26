@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import type { GeoJSONSource } from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
+import { isStyleReady } from '@/lib/mapStyle';
 import { useGridPrecip } from '@/hooks/useGridPrecip';
 import type { GridBbox } from '@/hooks/useGridPrecip';
 import type { GridPrecipPoint } from '@/lib/types/conditions';
@@ -395,11 +396,35 @@ export function PrecipOverlay({ map }: { map: mapboxgl.Map | null }) {
     };
   }, [isFetching, showPrecip, showWind, setLayerLoading]);
 
+  // Push legend-relevant data to the store for LegendPanel
+  const setPrecipLegendData = useMapStore((s) => s.setPrecipLegendData);
+  useEffect(() => {
+    if (!showPrecip && !showWind) {
+      setPrecipLegendData(null);
+      return;
+    }
+    const snowPoints = gridData?.points.filter((p) => p.snowfall > 0) ?? [];
+    const rainPoints = gridData?.points.filter((p) => p.precipitation > 0 && p.snowfall === 0) ?? [];
+    const precipPoints = gridData?.points.filter((p) => p.precipitation > 0 || p.snowfall > 0) ?? [];
+    const avgFreezingLevel =
+      precipPoints.length > 0
+        ? Math.round(precipPoints.reduce((sum, p) => sum + p.freezing_level_height, 0) / precipPoints.length)
+        : null;
+    setPrecipLegendData({
+      isLoading,
+      isError: isError || !gridData,
+      hasSnow: snowPoints.length > 0,
+      hasRain: rainPoints.length > 0,
+      avgFreezingLevel,
+    });
+    return () => setPrecipLegendData(null);
+  }, [showPrecip, showWind, gridData, isLoading, isError, setPrecipLegendData]);
+
   useEffect(() => {
     if (!map) return;
 
     function apply() {
-      if (!map!.isStyleLoaded()) return;
+      if (!isStyleReady(map!)) return;
 
       if (!showPrecip && !showWind) {
         removeAll(map!);
@@ -605,14 +630,17 @@ export function PrecipOverlay({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('styledata', apply);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) { apply(); } else { retryTimer = setTimeout(tryApply, 50); }
     }
+    tryApply();
 
     return () => {
-      map.off('styledata', apply);
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [map, showPrecip, showWind, gridData]);
 
@@ -623,101 +651,5 @@ export function PrecipOverlay({ map }: { map: mapboxgl.Map | null }) {
     };
   }, [map]);
 
-  // --- Legend ---
-  if (!showPrecip && !showWind) return null;
-
-  // Loading / error states
-  if (isLoading) {
-    return (
-      <div className="absolute bottom-[calc(30dvh+10rem)] left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm md:bottom-12">
-        <div className="flex items-center gap-2 text-[11px] text-gray-300">
-          <div className="h-3 w-3 animate-spin rounded-full border border-gray-500 border-t-white" />
-          Loading weather grid…
-        </div>
-      </div>
-    );
-  }
-
-  if (isError || !gridData) {
-    return (
-      <div className="absolute bottom-[calc(30dvh+10rem)] left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm md:bottom-12">
-        <div className="text-[11px] text-red-400">Weather data unavailable</div>
-      </div>
-    );
-  }
-
-  const snowPoints = gridData.points.filter((p) => p.snowfall > 0);
-  const rainPoints = gridData.points.filter((p) => p.precipitation > 0 && p.snowfall === 0);
-  const hasSnow = snowPoints.length > 0;
-  const hasRain = rainPoints.length > 0;
-
-  const precipPoints = gridData.points.filter((p) => p.precipitation > 0 || p.snowfall > 0);
-  const avgFreezingLevel =
-    precipPoints.length > 0
-      ? Math.round(precipPoints.reduce((sum, p) => sum + p.freezing_level_height, 0) / precipPoints.length)
-      : null;
-
-  return (
-    <div className="absolute bottom-[calc(30dvh+10rem)] left-3 z-10 rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm md:bottom-12">
-      {showPrecip && (
-        <>
-          {avgFreezingLevel !== null && (
-            <div className="mb-2 flex items-center gap-1.5 border-b border-white/20 pb-2 text-[11px] font-medium">
-              <span>❄️</span>
-              <span>Snow level: ~{metersToFeet(avgFreezingLevel).toLocaleString()}&apos;</span>
-            </div>
-          )}
-
-          {hasSnow && (
-            <div className="mb-1.5">
-              <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-blue-300">Snow</div>
-              <div
-                className="h-2.5 w-24 rounded-sm"
-                style={{ background: 'linear-gradient(to right, rgba(186,230,253,0.28), rgba(56,189,248,0.40), rgba(2,132,199,0.50), rgba(7,89,133,0.55), rgba(136,19,220,0.60))' }}
-              />
-              <div className="mt-0.5 flex justify-between text-[9px] text-gray-400" style={{ width: '6rem' }}>
-                <span>Light</span>
-                <span>Heavy</span>
-              </div>
-            </div>
-          )}
-
-          {hasRain && (
-            <div className={showWind ? 'mb-1.5' : ''}>
-              <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-green-300">Rain</div>
-              <div
-                className="h-2.5 w-24 rounded-sm"
-                style={{ background: 'linear-gradient(to right, rgba(74,222,128,0.25), rgba(250,204,21,0.4), rgba(251,146,60,0.5), rgba(239,68,68,0.58))' }}
-              />
-              <div className="mt-0.5 flex justify-between text-[9px] text-gray-400" style={{ width: '6rem' }}>
-                <span>Light</span>
-                <span>Heavy</span>
-              </div>
-            </div>
-          )}
-
-          {!hasSnow && !hasRain && (
-            <div className={`text-[11px] text-gray-400${showWind ? ' mb-1.5' : ''}`}>No active precipitation</div>
-          )}
-        </>
-      )}
-
-      {showWind && (
-        <div className={showPrecip ? 'border-t border-white/20 pt-1.5' : ''}>
-          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-gray-300">Wind (ridge)</div>
-          <div className="flex items-center gap-1.5 text-[10px]">
-            <span style={{ color: '#93C5FD' }}>→</span><span className="text-gray-400">Calm</span>
-            <span style={{ color: '#F59E0B' }}>→</span><span className="text-gray-400">Moderate</span>
-            <span style={{ color: '#EF4444' }}>→</span><span className="text-gray-400">Strong</span>
-          </div>
-        </div>
-      )}
-
-      {!selectedTourSlug && (
-        <div className="mt-1.5 border-t border-white/20 pt-1.5 text-[9px] text-gray-500">
-          Select a tour for detailed coverage
-        </div>
-      )}
-    </div>
-  );
+  return null;
 }

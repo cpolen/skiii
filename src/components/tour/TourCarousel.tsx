@@ -6,8 +6,10 @@ import { tours } from '@/data/tours';
 import { useAllToursConditions } from '@/hooks/useAllToursConditions';
 import { useAllToursWeather } from '@/hooks/useAllToursWeather';
 import { classifySnow } from '@/lib/analysis/snow-type';
+import type { SnowType } from '@/lib/analysis/snow-type';
 import { haversineM } from '@/lib/geo';
 import { CarouselCard } from './CarouselCard';
+import { SnowConditionsModal } from '@/components/ui/SnowConditionsModal';
 import type { WeatherForecast } from '@/lib/types/conditions';
 
 /** Difficulty levels that have at least one tour. */
@@ -30,8 +32,14 @@ export function TourCarousel() {
   const setSelectedForecastHour = useMapStore((s) => s.setSelectedForecastHour);
   const center = useMapStore((s) => s.center);
 
+  const conditionFilter = useMapStore((s) => s.conditionFilter);
+  const setConditionFilter = useMapStore((s) => s.setConditionFilter);
+  const setFilteredTourSlugs = useMapStore((s) => s.setFilteredTourSlugs);
+
   const [diffFilter, setDiffFilter] = useState<string | null>(null);
-  const [activeCondition, setActiveCondition] = useState<'corn' | 'powder' | null>(null);
+  const [disabledTooltip, setDisabledTooltip] = useState<'corn' | 'powder' | null>(null);
+  const [snowModal, setSnowModal] = useState<{ type: SnowType; detail: string } | null>(null);
+  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const tourConditions = useAllToursConditions();
@@ -58,13 +66,14 @@ export function TourCarousel() {
       });
   }, [center, tourStarts]);
 
-  // Filter by difficulty
+  // Filter by difficulty + condition
   const filteredIndices = useMemo(() => {
     return sortedIndices.filter((i) => {
       if (diffFilter && tours[i].difficulty !== diffFilter) return false;
+      if (conditionFilter && tourConditions[i]?.snowType?.type !== conditionFilter) return false;
       return true;
     });
-  }, [sortedIndices, diffFilter]);
+  }, [sortedIndices, diffFilter, conditionFilter, tourConditions]);
 
   // Map each tour slug → its visual rank in the sorted/filtered list.
   // Rendering in a FIXED order (tours array) while varying only the transform
@@ -142,43 +151,66 @@ export function TourCarousel() {
   }, [weatherQueries]);
 
   const handleGoToPowder = useCallback(() => {
-    if (activeCondition === 'powder') {
-      setActiveCondition(null);
+    if (conditionFilter === 'powder') {
+      setConditionFilter(null);
+      setFilteredTourSlugs(null);
       setSelectedForecastHour(null);
       return;
     }
     if (!bestConditions.powder) return;
-    setActiveCondition('powder');
+    setConditionFilter('powder');
     setSelectedForecastHour(bestConditions.powder.hour);
-  }, [activeCondition, bestConditions.powder, setSelectedForecastHour]);
+  }, [conditionFilter, bestConditions.powder, setSelectedForecastHour, setConditionFilter, setFilteredTourSlugs]);
 
   const handleGoToCorn = useCallback(() => {
-    if (activeCondition === 'corn') {
-      setActiveCondition(null);
+    if (conditionFilter === 'corn') {
+      setConditionFilter(null);
+      setFilteredTourSlugs(null);
       setSelectedForecastHour(null);
       return;
     }
     if (!bestConditions.corn) return;
-    setActiveCondition('corn');
+    setConditionFilter('corn');
     setSelectedForecastHour(bestConditions.corn.hour);
-  }, [activeCondition, bestConditions.corn, setSelectedForecastHour]);
+  }, [conditionFilter, bestConditions.corn, setSelectedForecastHour, setConditionFilter, setFilteredTourSlugs]);
 
-  // Clear active condition when user manually changes timeline
+  // Clear condition filter when user manually changes timeline
   useEffect(() => {
-    if (!activeCondition) return;
-    const expected = activeCondition === 'corn'
+    if (!conditionFilter) return;
+    const expected = conditionFilter === 'corn'
       ? bestConditions.corn?.hour
       : bestConditions.powder?.hour;
     if (selectedForecastHour !== expected) {
-      setActiveCondition(null);
+      setConditionFilter(null);
+      setFilteredTourSlugs(null);
     }
-  }, [selectedForecastHour, activeCondition, bestConditions]);
+  }, [selectedForecastHour, conditionFilter, bestConditions, setConditionFilter, setFilteredTourSlugs]);
+
+  // Sync filtered tour slugs to store for map marker filtering
+  useEffect(() => {
+    if (!conditionFilter) return;
+    const slugs = filteredIndices.map((i) => tours[i].slug);
+    setFilteredTourSlugs(slugs);
+  }, [conditionFilter, filteredIndices, setFilteredTourSlugs]);
+
+  // Dismiss tooltip on any outside tap
+  useEffect(() => {
+    if (!disabledTooltip) return;
+    const dismiss = () => setDisabledTooltip(null);
+    window.addEventListener('pointerdown', dismiss);
+    return () => window.removeEventListener('pointerdown', dismiss);
+  }, [disabledTooltip]);
+
+  // Clean up tooltip timer on unmount
+  useEffect(() => {
+    return () => { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); };
+  }, []);
 
   return (
     <div>
       {/* Filter pills */}
-      <div className="mb-2 flex items-center gap-1.5 overflow-x-auto scrollbar-hide" style={{ scrollbarWidth: 'none' }}>
-        {AVAILABLE_DIFFICULTIES.map((d) => (
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {/* {AVAILABLE_DIFFICULTIES.map((d) => (
           <button
             key={d}
             onClick={() => setDiffFilter(diffFilter === d ? null : d)}
@@ -190,31 +222,57 @@ export function TourCarousel() {
           >
             {d.charAt(0).toUpperCase() + d.slice(1)}
           </button>
-        ))}
-        {bestConditions.powder && (
+        ))} */}
+        <div className="relative shrink-0">
           <button
-            onClick={handleGoToPowder}
-            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap backdrop-blur-sm transition-colors ${
-              activeCondition === 'powder'
+            onClick={() => {
+              if (bestConditions.powder) { handleGoToPowder(); return; }
+              setDisabledTooltip((p) => p === 'powder' ? null : 'powder');
+              if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
+              tooltipTimer.current = setTimeout(() => setDisabledTooltip(null), 3000);
+            }}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap backdrop-blur-sm transition-colors ${
+              conditionFilter === 'powder'
                 ? 'bg-sky-600 text-white'
-                : 'bg-white/80 text-gray-600 ring-1 ring-gray-200/60'
+                : bestConditions.powder
+                  ? 'bg-white/80 text-gray-600 ring-1 ring-gray-200/60'
+                  : 'bg-white/40 text-gray-400 ring-1 ring-gray-200/40'
             }`}
           >
             {'\u2744'} Powder
           </button>
-        )}
-        {bestConditions.corn && (
+          {disabledTooltip === 'powder' && (
+            <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-gray-800 px-2.5 py-1.5 text-[10px] text-white shadow-lg">
+              No powder in the 72-hr forecast
+              <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+            </div>
+          )}
+        </div>
+        <div className="relative shrink-0">
           <button
-            onClick={handleGoToCorn}
-            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap backdrop-blur-sm transition-colors ${
-              activeCondition === 'corn'
+            onClick={() => {
+              if (bestConditions.corn) { handleGoToCorn(); return; }
+              setDisabledTooltip((p) => p === 'corn' ? null : 'corn');
+              if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
+              tooltipTimer.current = setTimeout(() => setDisabledTooltip(null), 3000);
+            }}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap backdrop-blur-sm transition-colors ${
+              conditionFilter === 'corn'
                 ? 'bg-amber-600 text-white'
-                : 'bg-white/80 text-gray-600 ring-1 ring-gray-200/60'
+                : bestConditions.corn
+                  ? 'bg-white/80 text-gray-600 ring-1 ring-gray-200/60'
+                  : 'bg-white/40 text-gray-400 ring-1 ring-gray-200/40'
             }`}
           >
             {'\uD83C\uDF3D'} Corn
           </button>
-        )}
+          {disabledTooltip === 'corn' && (
+            <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-gray-800 px-2.5 py-1.5 text-[10px] text-white shadow-lg">
+              No corn in the 72-hr forecast
+              <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Scrollable card carousel — cards rendered in FIXED order (tours array)
@@ -238,6 +296,10 @@ export function TourCarousel() {
             const rank = positionMap.get(tour.slug);
             if (rank === undefined) return null; // filtered out by difficulty
             const entry = tourConditions[tourIdx];
+            const forecast = weatherQueries[tourIdx]?.data ?? null;
+            const hourly = forecast && selectedForecastHour != null
+              ? forecast.hourly[selectedForecastHour]
+              : undefined;
             return (
               <button
                 key={tour.slug}
@@ -254,14 +316,23 @@ export function TourCarousel() {
                   tour={tour}
                   conditions={entry?.conditions}
                   snowType={entry?.snowType}
+                  hourly={hourly}
                   isLoading={entry?.isLoading ?? true}
                   isActive={rank === useMapStore.getState().activeCarouselIndex}
+                  onSnowTypeClick={(type, detail) => setSnowModal({ type, detail })}
                 />
               </button>
             );
           })}
         </div>
       </div>
+
+      <SnowConditionsModal
+        open={snowModal != null}
+        activeType={snowModal?.type ?? null}
+        activeDetail={snowModal?.detail}
+        onClose={() => setSnowModal(null)}
+      />
     </div>
   );
 }

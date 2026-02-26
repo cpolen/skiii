@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
+import { isStyleReady } from '@/lib/mapStyle';
 import { getSunPosition } from '@/lib/analysis/solar';
 
 /**
@@ -92,7 +93,7 @@ export function SunExposureOverlay({ map }: { map: mapboxgl.Map | null }) {
     if (!map) return;
 
     function apply() {
-      if (!map!.isStyleLoaded()) return;
+      if (!isStyleReady(map!)) return;
 
       if (!showSunExposure) {
         removeAll(map!);
@@ -154,71 +155,20 @@ export function SunExposureOverlay({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('styledata', apply);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) { apply(); } else { retryTimer = setTimeout(tryApply, 50); }
     }
+    tryApply();
 
     return () => {
-      map.off('styledata', apply);
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       removeAll(map);
     };
   }, [map, showSunExposure, sun.azimuth, exaggeration, isNight]);
 
-  if (!showSunExposure) return null;
-
-  // Format time label
-  const timeLabel =
-    selectedForecastHour != null
-      ? sunDate.toLocaleString('en-US', {
-          timeZone: 'America/Los_Angeles',
-          weekday: 'short',
-          hour: 'numeric',
-          minute: undefined,
-          hour12: true,
-        })
-      : 'Now';
-
-  return (
-    <div className="rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
-      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-gray-300">
-        Sun Exposure
-      </div>
-      {isNight ? (
-        <div className="flex items-center gap-1.5 text-[11px] text-blue-300">
-          <span>🌙</span>
-          <span>Night — sun below horizon</span>
-        </div>
-      ) : (
-        <>
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px]">
-            <span>☀️</span>
-            <span>
-              {azimuthToCompass(sun.azimuth)} at {Math.round(sun.elevation)}° elevation
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <div
-                className="h-3 w-5 rounded-sm"
-                style={{ background: 'rgba(255, 200, 50, 1.0)' }}
-              />
-              <span className="text-[9px] text-gray-400">Sun</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div
-                className="h-3 w-5 rounded-sm"
-                style={{ background: 'rgba(20, 30, 80, 0.95)' }}
-              />
-              <span className="text-[9px] text-gray-400">Shade</span>
-            </div>
-          </div>
-        </>
-      )}
-      <div className="mt-1.5 border-t border-white/20 pt-1 text-[9px] text-gray-500">
-        {timeLabel}
-      </div>
-    </div>
-  );
+  return null;
 }

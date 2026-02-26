@@ -8,6 +8,7 @@ import { SidebarConditions } from './SidebarConditions';
 import { OverviewTimeline } from './OverviewTimeline';
 import { tours } from '@/data/tours';
 import { useAllToursWeather } from '@/hooks/useAllToursWeather';
+import { useMapWeather } from '@/hooks/useMapWeather';
 import { useAvyForecast } from '@/hooks/useAvyForecast';
 import { assessConditions } from '@/lib/analysis/scoring';
 import { classifySnow } from '@/lib/analysis/snow-type';
@@ -32,6 +33,9 @@ export function TourPanel() {
   const selectTour = useMapStore((s) => s.selectTour);
   const selectedForecastHour = useMapStore((s) => s.selectedForecastHour);
   const setSelectedForecastHour = useMapStore((s) => s.setSelectedForecastHour);
+  const conditionFilter = useMapStore((s) => s.conditionFilter);
+  const setConditionFilter = useMapStore((s) => s.setConditionFilter);
+  const setFilteredTourSlugs = useMapStore((s) => s.setFilteredTourSlugs);
   const [searchQuery, setSearchQuery] = useState('');
   const [diffFilter, setDiffFilter] = useState<string | null>(null);
 
@@ -57,6 +61,7 @@ export function TourPanel() {
 
   // Batch-fetch weather for all tours (cache-shared with per-tour useWeather)
   const weatherQueries = useAllToursWeather();
+  const { data: mapWeather } = useMapWeather();
   const { data: avyData, isFetching: avyFetching } = useAvyForecast();
   const setLayerLoading = useMapStore((s) => s.setLayerLoading);
 
@@ -92,6 +97,17 @@ export function TourPanel() {
       return { conditions, snowType, isLoading };
     });
   }, [weatherQueries, avyData, selectedForecastHour]);
+
+  // Sync scores to the map store for marker colors (mirrors TourCarousel logic)
+  const setTourScores = useMapStore((s) => s.setTourScores);
+  useEffect(() => {
+    const scores: Record<string, number> = {};
+    tours.forEach((tour, i) => {
+      const c = tourConditions[i]?.conditions;
+      scores[tour.slug] = c ? c.composite : -1;
+    });
+    setTourScores(scores);
+  }, [tourConditions, setTourScores]);
 
   // Per-tour: does this tour have any 'more' favorable daytime hours on the selected day?
   // When no hour selected → checks today. When a specific hour is selected → checks that day.
@@ -153,15 +169,16 @@ export function TourPanel() {
   // useGuideBubble({ tourConditions, weatherQueries, avyData, sortedTourIndices });
   useSharedGuide({ tourConditions, weatherQueries, avyData, sortedTourIndices });
 
-  // Filter tours by search query and difficulty
+  // Filter tours by search query, difficulty, and condition
   const filteredIndices = useMemo(() => {
     return sortedTourIndices.filter((i) => {
       const tour = tours[i];
       if (searchQuery && !tour.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       if (diffFilter && tour.difficulty !== diffFilter) return false;
+      if (conditionFilter && tourConditions[i]?.snowType?.type !== conditionFilter) return false;
       return true;
     });
-  }, [sortedTourIndices, searchQuery, diffFilter]);
+  }, [sortedTourIndices, searchQuery, diffFilter, conditionFilter, tourConditions]);
 
   // Sync top-3 ranked tour slugs to the store so the map can highlight them
   const setTopTourSlugs = useMapStore((s) => s.setTopTourSlugs);
@@ -281,47 +298,51 @@ export function TourPanel() {
     });
   }, [weatherQueries]);
 
-  // Track which condition shortcut is active (so tapping again resets to "now")
-  const [activeCondition, setActiveCondition] = useState<'corn' | 'powder' | null>(null);
-
   // Snow conditions modal state
-  const [snowModalType, setSnowModalType] = useState<SnowType | null>(null);
+  const [snowModal, setSnowModal] = useState<{ type: SnowType; detail: string } | null>(null);
 
   const handleGoToCorn = useCallback(() => {
-    if (activeCondition === 'corn') {
-      // Toggle off — reset to "now"
-      setActiveCondition(null);
+    if (conditionFilter === 'corn') {
+      setConditionFilter(null);
+      setFilteredTourSlugs(null);
       setSelectedForecastHour(null);
       return;
     }
     if (!bestConditions.corn) return;
-    setActiveCondition('corn');
+    setConditionFilter('corn');
     setSelectedForecastHour(bestConditions.corn.hour);
-  }, [activeCondition, bestConditions.corn, setSelectedForecastHour]);
+  }, [conditionFilter, bestConditions.corn, setSelectedForecastHour, setConditionFilter, setFilteredTourSlugs]);
 
   const handleGoToPowder = useCallback(() => {
-    if (activeCondition === 'powder') {
-      // Toggle off — reset to "now"
-      setActiveCondition(null);
+    if (conditionFilter === 'powder') {
+      setConditionFilter(null);
+      setFilteredTourSlugs(null);
       setSelectedForecastHour(null);
       return;
     }
     if (!bestConditions.powder) return;
-    setActiveCondition('powder');
+    setConditionFilter('powder');
     setSelectedForecastHour(bestConditions.powder.hour);
-  }, [activeCondition, bestConditions.powder, setSelectedForecastHour]);
+  }, [conditionFilter, bestConditions.powder, setSelectedForecastHour, setConditionFilter, setFilteredTourSlugs]);
 
-  // Clear active condition when user manually interacts with the timeline
-  // (selectedForecastHour changes to something other than what the condition set)
+  // Clear condition filter when user manually interacts with the timeline
   useEffect(() => {
-    if (!activeCondition) return;
-    const expected = activeCondition === 'corn'
+    if (!conditionFilter) return;
+    const expected = conditionFilter === 'corn'
       ? bestConditions.corn?.hour
       : bestConditions.powder?.hour;
     if (selectedForecastHour !== expected) {
-      setActiveCondition(null);
+      setConditionFilter(null);
+      setFilteredTourSlugs(null);
     }
-  }, [selectedForecastHour, activeCondition, bestConditions]);
+  }, [selectedForecastHour, conditionFilter, bestConditions, setConditionFilter, setFilteredTourSlugs]);
+
+  // Sync filtered tour slugs to store for map marker filtering
+  useEffect(() => {
+    if (!conditionFilter) return;
+    const slugs = filteredIndices.map((i) => tours[i].slug);
+    setFilteredTourSlugs(slugs);
+  }, [conditionFilter, filteredIndices, setFilteredTourSlugs]);
 
   return (
     <>
@@ -354,6 +375,7 @@ export function TourPanel() {
                     selectedHour={selectedForecastHour}
                     onSelectHour={setSelectedForecastHour}
                     aggregatedFavorability={aggregatedFavorability}
+                    locationForecast={mapWeather}
                   />
                 ) : (
                   <div className="mb-2 h-16 animate-pulse rounded-lg bg-gray-100" />
@@ -393,7 +415,7 @@ export function TourPanel() {
                         isLoading={tourConditions[i]?.isLoading}
                         rank={rankIndex + 1}
                         nextWindow={tourNextWindows[i]}
-                        onSnowTypeClick={setSnowModalType}
+                        onSnowTypeClick={(type, explanation) => setSnowModal({ type, detail: explanation })}
                       />
                     </button>
                   );
@@ -431,20 +453,22 @@ export function TourPanel() {
         totalCount={tours.length}
         hasCorn={!!bestConditions.corn}
         hasPowder={!!bestConditions.powder}
-        activeCondition={activeCondition}
+        activeCondition={conditionFilter}
         onGoToCorn={handleGoToCorn}
         onGoToPowder={handleGoToPowder}
         aggregatedFavorability={aggregatedFavorability}
         tourNextWindows={tourNextWindows}
         tourFavorableForDay={tourFavorableForDay}
         notFavorableLabel={notFavorableLabel}
-        onSnowTypeClick={setSnowModalType}
+        onSnowTypeClick={(type, explanation) => setSnowModal({ type, detail: explanation })}
+        locationForecast={mapWeather}
       />
 
       <SnowConditionsModal
-        open={snowModalType != null}
-        activeType={snowModalType}
-        onClose={() => setSnowModalType(null)}
+        open={snowModal != null}
+        activeType={snowModal?.type ?? null}
+        activeDetail={snowModal?.detail}
+        onClose={() => setSnowModal(null)}
       />
     </>
   );
@@ -476,6 +500,7 @@ function MobileBottomSheet({
   tourFavorableForDay,
   notFavorableLabel,
   onSnowTypeClick,
+  locationForecast,
 }: {
   selectedTour: ReturnType<typeof tours.find> | null;
   onBack: () => void;
@@ -501,7 +526,8 @@ function MobileBottomSheet({
   tourNextWindows: ({ startTime: string; endTime: string } | null)[];
   tourFavorableForDay: boolean[];
   notFavorableLabel: string;
-  onSnowTypeClick: (type: SnowType) => void;
+  onSnowTypeClick: (type: SnowType, explanation: string) => void;
+  locationForecast?: WeatherForecast | null;
 }) {
   const [sheetHeight, setSheetHeight] = useState<'collapsed' | 'half' | 'full'>('half');
   const startY = useRef(0);
@@ -702,6 +728,7 @@ function MobileBottomSheet({
                   selectedHour={selectedForecastHour}
                   onSelectHour={onSelectHour}
                   aggregatedFavorability={selectedTour ? null : aggregatedFavorability}
+                  locationForecast={locationForecast}
                 />
               </div>
             ) : (
@@ -795,7 +822,7 @@ function TourSearchFilter({
         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs placeholder:text-gray-400 focus:border-blue-300 focus:ring-1 focus:ring-blue-300 focus:outline-none"
         aria-label="Search tours by name"
       />
-      <div className="flex items-center gap-1.5">
+      {/* <div className="flex items-center gap-1.5">
         {AVAILABLE_DIFFICULTIES.map((d) => (
           <button
             key={d}
@@ -809,7 +836,7 @@ function TourSearchFilter({
             {d.charAt(0).toUpperCase() + d.slice(1)}
           </button>
         ))}
-      </div>
+      </div> */}
       <p className="text-xs text-gray-500">
         {filteredCount === totalCount
           ? `${totalCount} tours \u00B7 Ranked by conditions`
@@ -846,18 +873,31 @@ function MobileSearchBar({
   onGoToPowder: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [disabledTooltip, setDisabledTooltip] = useState<'corn' | 'powder' | null>(null);
+  const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  useEffect(() => {
+    if (!disabledTooltip) return;
+    const dismiss = () => setDisabledTooltip(null);
+    window.addEventListener('pointerdown', dismiss);
+    return () => window.removeEventListener('pointerdown', dismiss);
+  }, [disabledTooltip]);
+
+  useEffect(() => {
+    return () => { if (tooltipTimer.current) clearTimeout(tooltipTimer.current); };
+  }, []);
+
   return (
     <div className="mb-1 space-y-2">
       {/* Single row: scrollable difficulty pills + search icon on right */}
       <div className="flex items-center gap-1.5">
-        <div className="flex-1 flex items-center gap-1.5 overflow-x-auto scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-          {AVAILABLE_DIFFICULTIES.map((d) => (
+        <div className="flex-1 flex flex-wrap items-center gap-1.5">
+          {/* {AVAILABLE_DIFFICULTIES.map((d) => (
             <button
               key={d}
               onClick={() => onDiffFilterChange(diffFilter === d ? null : d)}
@@ -869,31 +909,57 @@ function MobileSearchBar({
             >
               {d.charAt(0).toUpperCase() + d.slice(1)}
             </button>
-          ))}
-          {hasPowder && (
+          ))} */}
+          <div className="relative shrink-0">
             <button
-              onClick={onGoToPowder}
-              className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
+              onClick={() => {
+                if (hasPowder) { onGoToPowder(); return; }
+                setDisabledTooltip((p) => p === 'powder' ? null : 'powder');
+                if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
+                tooltipTimer.current = setTimeout(() => setDisabledTooltip(null), 3000);
+              }}
+              className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
                 activeCondition === 'powder'
                   ? 'bg-sky-600 text-white'
-                  : 'bg-gray-100 text-gray-600'
+                  : hasPowder
+                    ? 'bg-gray-100 text-gray-600'
+                    : 'bg-gray-50 text-gray-400'
               }`}
             >
               {'\u2744'} Powder
             </button>
-          )}
-          {hasCorn && (
+            {disabledTooltip === 'powder' && (
+              <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-gray-800 px-2.5 py-1.5 text-[10px] text-white shadow-lg z-10">
+                No powder in the 72-hr forecast
+                <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+              </div>
+            )}
+          </div>
+          <div className="relative shrink-0">
             <button
-              onClick={onGoToCorn}
-              className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
+              onClick={() => {
+                if (hasCorn) { onGoToCorn(); return; }
+                setDisabledTooltip((p) => p === 'corn' ? null : 'corn');
+                if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
+                tooltipTimer.current = setTimeout(() => setDisabledTooltip(null), 3000);
+              }}
+              className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
                 activeCondition === 'corn'
                   ? 'bg-amber-600 text-white'
-                  : 'bg-gray-100 text-gray-600'
+                  : hasCorn
+                    ? 'bg-gray-100 text-gray-600'
+                    : 'bg-gray-50 text-gray-400'
               }`}
             >
               {'\uD83C\uDF3D'} Corn
             </button>
-          )}
+            {disabledTooltip === 'corn' && (
+              <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-gray-800 px-2.5 py-1.5 text-[10px] text-white shadow-lg z-10">
+                No corn in the 72-hr forecast
+                <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+              </div>
+            )}
+          </div>
         </div>
         <button
           onClick={() => {

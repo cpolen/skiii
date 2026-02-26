@@ -63,7 +63,7 @@ export const TourCard = memo(function TourCard({
   isLoading?: boolean;
   rank?: number;
   nextWindow?: { startTime: string; endTime: string } | null;
-  onSnowTypeClick?: (type: SnowType) => void;
+  onSnowTypeClick?: (type: SnowType, explanation: string) => void;
 }) {
   const router = useRouter();
   const diff = DIFFICULTY_LABELS[tour.difficulty];
@@ -152,8 +152,8 @@ export const TourCard = memo(function TourCard({
         <p
           role="button"
           tabIndex={0}
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onSnowTypeClick?.(snowType.type); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); onSnowTypeClick?.(snowType.type); } }}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onSnowTypeClick?.(snowType.type, snowType.explanation); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); onSnowTypeClick?.(snowType.type, snowType.explanation); } }}
           className="mt-1 cursor-pointer text-[11px] text-gray-600 active:text-gray-900"
         >
           <span className="mr-1">{snowType.emoji}</span>

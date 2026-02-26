@@ -24,10 +24,12 @@ const SNOW_CONDITIONS: { type: SnowType | string; emoji: string; label: string; 
 export function SnowConditionsModal({
   open,
   activeType,
+  activeDetail,
   onClose,
 }: {
   open: boolean;
   activeType: SnowType | null;
+  activeDetail?: string;
   onClose: () => void;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
@@ -103,6 +105,11 @@ export function SnowConditionsModal({
                 <p className={`mt-0.5 text-[12px] leading-relaxed ${isActive ? 'text-blue-700' : 'text-gray-500'}`}>
                   {condition.description}
                 </p>
+                {isActive && activeDetail && (
+                  <p className="mt-1 text-[11px] font-semibold italic text-blue-600">
+                    Why it&apos;s {condition.label}: {activeDetail}
+                  </p>
+                )}
               </div>
             );
           })}

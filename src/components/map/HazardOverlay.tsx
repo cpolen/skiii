@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import mapboxgl from 'mapbox-gl';
 import DOMPurify from 'dompurify';
 import { useMapStore } from '@/stores/map';
+import { isStyleReady } from '@/lib/mapStyle';
 import { tours } from '@/data/tours';
 import type { TerrainTrap, OverheadHazard } from '@/lib/types/tour';
 
@@ -127,7 +128,6 @@ export function HazardOverlay({ map }: { map: mapboxgl.Map | null }) {
     let clickHandler: ((e: mapboxgl.MapLayerMouseEvent) => void) | null = null;
     let enterHandler: (() => void) | null = null;
     let leaveHandler: (() => void) | null = null;
-    let pendingStyleHandler: (() => void) | null = null;
 
     const apply = () => {
       removeAll(map);
@@ -239,18 +239,17 @@ export function HazardOverlay({ map }: { map: mapboxgl.Map | null }) {
       map.on('mouseleave', POINTS_LAYER, leaveHandler);
     };
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      pendingStyleHandler = apply;
-      map.once('styledata', pendingStyleHandler);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) { apply(); } else { retryTimer = setTimeout(tryApply, 50); }
     }
+    tryApply();
 
     return () => {
-      // Cancel pending styledata handler if it hasn't fired yet
-      if (pendingStyleHandler) {
-        map.off('styledata', pendingStyleHandler);
-      }
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       // Remove event listeners before removing layers
       if (clickHandler) map.off('click', POINTS_LAYER, clickHandler);
       if (enterHandler) map.off('mouseenter', POINTS_LAYER, enterHandler);

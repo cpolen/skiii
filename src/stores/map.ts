@@ -35,11 +35,27 @@ interface MapState {
   // Forecast time selection
   selectedForecastHour: number | null; // hourly index into 72-hour forecast, null = "now"
 
+  // Condition filter (corn/powder shortcut buttons)
+  conditionFilter: 'corn' | 'powder' | null;
+  filteredTourSlugs: string[] | null; // when condition filter is active, only these tours are shown
+
   // Top-ranked tour slugs (set by TourPanel when a forecast hour is selected)
   topTourSlugs: string[]; // ordered best→worst, up to 3
 
   // Layer loading indicators (keyed by layer name, e.g. 'wind', 'precip', 'routeWeather')
   layerLoading: Record<string, boolean>;
+
+  // Precip/wind legend data (set by PrecipOverlay, read by LegendPanel)
+  precipLegendData: {
+    isLoading: boolean;
+    isError: boolean;
+    hasSnow: boolean;
+    hasRain: boolean;
+    avgFreezingLevel: number | null;
+  } | null;
+
+  // Saved viewport to restore when going back from a route detail
+  previousViewport: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null;
 
   // Route editing (dev only)
   isEditingRoute: boolean;
@@ -61,6 +77,8 @@ interface MapState {
   toggleTreeCover: () => void;
   toggleHazards: () => void;
   setSelectedForecastHour: (hour: number | null) => void;
+  setConditionFilter: (filter: 'corn' | 'powder' | null) => void;
+  setFilteredTourSlugs: (slugs: string[] | null) => void;
   setTopTourSlugs: (slugs: string[]) => void;
   selectTour: (slug: string | null) => void;
   setViewMode: (mode: 'map' | 'detail') => void;
@@ -69,6 +87,7 @@ interface MapState {
   setSelectedVariantIndex: (idx: number) => void;
   toggleRouteEditor: () => void;
   setLayerLoading: (layer: string, loading: boolean) => void;
+  setPrecipLegendData: (data: MapState['precipLegendData']) => void;
   setEditingCoordinates: (coords: [number, number][] | null) => void;
   setEditingVariantIndex: (idx: number) => void;
 }
@@ -97,8 +116,12 @@ export const useMapStore = create<MapState>((set) => ({
   activeCarouselIndex: 0,
   tourScores: {},
   selectedForecastHour: null,
+  conditionFilter: null,
+  filteredTourSlugs: null,
   topTourSlugs: [],
   layerLoading: {},
+  precipLegendData: null,
+  previousViewport: null,
   isEditingRoute: false,
   editingCoordinates: null,
   editingVariantIndex: 0,
@@ -121,6 +144,8 @@ export const useMapStore = create<MapState>((set) => ({
       pitch: !state.show3DTerrain ? 60 : 0,
     })),
   setSelectedForecastHour: (hour) => set({ selectedForecastHour: hour }),
+  setConditionFilter: (filter) => set({ conditionFilter: filter }),
+  setFilteredTourSlugs: (slugs) => set({ filteredTourSlugs: slugs }),
   setTopTourSlugs: (slugs) =>
     set((state) => {
       // Avoid creating new state when slugs haven't changed (e.g. repeated [] calls)
@@ -129,9 +154,16 @@ export const useMapStore = create<MapState>((set) => ({
       return { topTourSlugs: slugs };
     }),
   selectTour: (slug) =>
-    set(() => slug
-      ? { selectedTourSlug: slug, selectedVariantIndex: 0, viewMode: 'detail' as const, isEditingRoute: false, editingCoordinates: null }
-      : { selectedTourSlug: null, selectedVariantIndex: 0, viewMode: 'map' as const, isEditingRoute: false, editingCoordinates: null },
+    set((state) => slug
+      ? {
+          selectedTourSlug: slug, selectedVariantIndex: 0, viewMode: 'detail' as const,
+          isEditingRoute: false, editingCoordinates: null,
+          previousViewport: { center: state.center, zoom: state.zoom, pitch: state.pitch, bearing: state.bearing },
+        }
+      : {
+          selectedTourSlug: null, selectedVariantIndex: 0, viewMode: 'map' as const,
+          isEditingRoute: false, editingCoordinates: null,
+        },
     ),
   setViewMode: (mode) => set({ viewMode: mode }),
   setActiveCarouselIndex: (index) => set({ activeCarouselIndex: index }),
@@ -161,6 +193,7 @@ export const useMapStore = create<MapState>((set) => ({
       if (state.layerLoading[layer] === loading) return state; // no change
       return { layerLoading: { ...state.layerLoading, [layer]: loading } };
     }),
+  setPrecipLegendData: (data) => set({ precipLegendData: data }),
   setEditingCoordinates: (coords) => set({ editingCoordinates: coords }),
   setEditingVariantIndex: (idx) => set({ editingVariantIndex: idx }),
 }));

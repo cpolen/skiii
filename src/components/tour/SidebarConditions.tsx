@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Tour } from '@/lib/types/tour';
 import { useWeather } from '@/hooks/useWeather';
+import { useMapWeather } from '@/hooks/useMapWeather';
 import type { WeatherForecast } from '@/lib/types/conditions';
 import { analyzeTiming, assessHour } from '@/lib/analysis/timing';
 import { useMapStore } from '@/stores/map';
@@ -43,6 +44,7 @@ function kmToMiles(km: number): number {
 export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTimeline?: boolean }) {
   const router = useRouter();
   const { data: forecast, isLoading: weatherLoading } = useWeather(tour);
+  const { data: mapWeather } = useMapWeather();
   const { data: avyData } = useAvyForecast();
   const selectedHour = useMapStore((s) => s.selectedForecastHour);
   const setSelectedHour = useMapStore((s) => s.setSelectedForecastHour);
@@ -252,6 +254,7 @@ export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTime
               tour={tour}
               selectedHour={selectedHour}
               onSelectHour={setSelectedHour}
+              locationForecast={mapWeather}
             />
           </div>
         ) : weatherLoading ? (

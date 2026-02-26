@@ -11,6 +11,9 @@ import { PrecipOverlay } from './PrecipOverlay';
 import { RouteWeatherDots } from './RouteWeatherDots';
 import { HazardOverlay } from './HazardOverlay';
 import { SAC_ZONE_GEOJSON } from '@/data/avy-zones';
+import { isStyleReady } from '@/lib/mapStyle';
+
+import { LegendPanel } from './LegendPanel';
 
 // Code-split overlays that are off by default — only loaded when toggled on
 const SlopeOverlay = lazy(() => import('./SlopeOverlay').then((m) => ({ default: m.SlopeOverlay })));
@@ -87,6 +90,7 @@ export const TourMap = memo(function TourMap() {
   const selectTour = useMapStore((s) => s.selectTour);
   const selectedTourSlug = useMapStore((s) => s.selectedTourSlug);
   const tourScores = useMapStore((s) => s.tourScores);
+  const filteredTourSlugs = useMapStore((s) => s.filteredTourSlugs);
 
   // Get the geographic coordinate at the blue "location" dot's pixel position.
   // The dot is centered in the visible map area (above the bottom overlay),
@@ -275,9 +279,10 @@ export const TourMap = memo(function TourMap() {
     const wasSelected = prevSlugRef.current;
     prevSlugRef.current = selectedTourSlug;
 
-    // Only fit bounds on initial load — skip when returning from a selected tour
-    // so the user's map position is preserved.
-    if (!selectedTourSlug && !wasSelected && mapRef.current) {
+    // Fit all markers when no tour is selected:
+    // - On initial load (wasSelected=false): instant (duration 0)
+    // - When deselecting (wasSelected=true): animated fly-out
+    if (!selectedTourSlug && mapRef.current) {
       const isMobile = window.innerWidth < 768;
       mapRef.current.fitBounds(getTourMarkerBounds(), {
         padding: isMobile
@@ -286,7 +291,7 @@ export const TourMap = memo(function TourMap() {
         pitch: show3DTerrain ? 60 : 0,
         bearing: 0,
         maxZoom: 9.5,
-        duration: 0,
+        duration: wasSelected ? 1200 : 0,
         essential: true,
       });
     }
@@ -295,8 +300,10 @@ export const TourMap = memo(function TourMap() {
   // Refs for styledata handler (avoids stale closures)
   const tourScoresRef = useRef<Record<string, number>>({});
   const selectedSlugRef = useRef<string | null>(null);
+  const filteredSlugsRef = useRef<string[] | null>(null);
   useEffect(() => { tourScoresRef.current = tourScores; }, [tourScores]);
   useEffect(() => { selectedSlugRef.current = selectedTourSlug; }, [selectedTourSlug]);
+  useEffect(() => { filteredSlugsRef.current = filteredTourSlugs; }, [filteredTourSlugs]);
 
   // Update marker GeoJSON data and paint when scores or selection change
   const applyMarkerStyles = useCallback(() => {
@@ -326,6 +333,15 @@ export const TourMap = memo(function TourMap() {
       3.5,
       2.5,
     ]);
+
+    // Filter markers when a condition filter is active
+    const slugs = filteredSlugsRef.current;
+    const filter = slugs ? ['in', ['get', 'slug'], ['literal', slugs]] : null;
+    map.setFilter('tour-markers-layer', filter);
+    map.setFilter('tour-score-badges', slugs
+      ? ['all', ['>=', ['get', 'score'], 0], ['in', ['get', 'slug'], ['literal', slugs]]]
+      : ['>=', ['get', 'score'], 0]);
+    map.setFilter('tour-markers-labels', filter);
   }, []);
 
   // Register styledata listener once when map is ready
@@ -336,10 +352,10 @@ export const TourMap = memo(function TourMap() {
     return () => { map.off('styledata', applyMarkerStyles); };
   }, [mapReady, applyMarkerStyles]);
 
-  // Apply immediately when scores or selection change
+  // Apply immediately when scores, selection, or filter change
   useEffect(() => {
     applyMarkerStyles();
-  }, [selectedTourSlug, tourScores, applyMarkerStyles]);
+  }, [selectedTourSlug, tourScores, filteredTourSlugs, applyMarkerStyles]);
 
   // Toggle 3D terrain.
   // On mount, only configure the terrain source — skip the easeTo animation
@@ -347,7 +363,7 @@ export const TourMap = memo(function TourMap() {
   // Subsequent user-initiated toggles animate normally.
   const terrainMountRef = useRef(true);
   useEffect(() => {
-    if (!mapRef.current?.isStyleLoaded()) return;
+    if (!mapRef.current || !isStyleReady(mapRef.current)) return;
     const isMount = terrainMountRef.current;
     terrainMountRef.current = false;
 
@@ -363,7 +379,7 @@ export const TourMap = memo(function TourMap() {
   // Toggle avy zones layer
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map || !isStyleReady(map)) return;
     const sourceId = 'avy-zones';
     const fillId = 'avy-zones-fill';
     const outlineId = 'avy-zones-outline';
@@ -430,17 +446,17 @@ export const TourMap = memo(function TourMap() {
       {mapReady && <TourRoute map={mapRef.current} />}
       {mapReady && <RouteEditor map={mapRef.current} />}
       {mapReady && <PrecipOverlay map={mapRef.current} />}
-      {/* Right-side legends stacked above carousel/timeline */}
-      <div className="absolute bottom-64 right-3 z-10 flex flex-col items-end gap-2 md:bottom-52">
-        {mapReady && (
-          <Suspense fallback={null}>
-            <SlopeOverlay map={mapRef.current} />
-            <TreeCoverOverlay map={mapRef.current} />
-            <SunExposureOverlay map={mapRef.current} />
-            <AspectOverlay map={mapRef.current} />
-          </Suspense>
-        )}
-      </div>
+      {/* Overlay map-layer managers (no DOM output — they return null) */}
+      {mapReady && (
+        <Suspense fallback={null}>
+          <SlopeOverlay map={mapRef.current} />
+          <TreeCoverOverlay map={mapRef.current} />
+          <SunExposureOverlay map={mapRef.current} />
+          <AspectOverlay map={mapRef.current} />
+        </Suspense>
+      )}
+      {/* Legend button + panel — shows legends for all active overlays */}
+      <LegendPanel />
       {mapReady && <RouteWeatherDots map={mapRef.current} />}
       {mapReady && <HazardOverlay map={mapRef.current} />}
     </>

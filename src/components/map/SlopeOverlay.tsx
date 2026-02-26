@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
-import { useAvyForecast } from '@/hooks/useAvyForecast';
-import { AspectElevationRose, parseLocations } from '@/components/tour/AvyDangerBanner';
+import { isStyleReady } from '@/lib/mapStyle';
 
 /**
  * True slope angle overlay using server-computed tiles.
@@ -37,13 +36,12 @@ function removeAll(map: mapboxgl.Map) {
 
 export function SlopeOverlay({ map }: { map: mapboxgl.Map | null }) {
   const showSlopeAngle = useMapStore((s) => s.showSlopeAngle);
-  const { data: avyData } = useAvyForecast();
 
   useEffect(() => {
     if (!map) return;
 
     function apply() {
-      if (!map!.isStyleLoaded()) return;
+      if (!isStyleReady(map!)) return;
 
       if (!showSlopeAngle) {
         removeAll(map!);
@@ -80,91 +78,20 @@ export function SlopeOverlay({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('styledata', apply);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) { apply(); } else { retryTimer = setTimeout(tryApply, 50); }
     }
+    tryApply();
 
     return () => {
-      map.off('styledata', apply);
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       removeAll(map);
     };
   }, [map, showSlopeAngle]);
 
-  const [avyExpanded, setAvyExpanded] = useState(false);
-
-  if (!showSlopeAngle) return null;
-
-  // Legend
-  const ranges = [
-    { label: '25-29°', color: '#4CAF50' },
-    { label: '30-34°', color: '#FFEB3B' },
-    { label: '35-39°', color: '#FF9800' },
-    { label: '40-44°', color: '#F44336' },
-    { label: '45-49°', color: '#E91E63' },
-    { label: '50°+', color: '#9C27B0' },
-  ];
-
-  const problems = avyData?.detailed?.problems ?? [];
-
-  return (
-    <div className="rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
-      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-gray-300">
-        Slope Angle
-      </div>
-      <div className="flex gap-0.5">
-        {ranges.map((r) => (
-          <div key={r.label} className="flex flex-col items-center">
-            <div
-              className="h-3 w-6 rounded-sm"
-              style={{ background: r.color, opacity: 0.85 }}
-            />
-            <span className="mt-0.5 text-[8px] text-gray-400">{r.label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Avy problem roses — collapsible accordion */}
-      {problems.length > 0 && (
-        <div className="mt-2 border-t border-white/20 pt-2">
-          <button
-            onClick={() => setAvyExpanded((v) => !v)}
-            className="flex w-full items-center justify-between text-[10px] font-medium uppercase tracking-wider text-gray-300"
-          >
-            <span>Avy Problems ({problems.length})</span>
-            <svg
-              className={`h-3 w-3 text-gray-400 transition-transform duration-150 ${avyExpanded ? 'rotate-180' : ''}`}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-            </svg>
-          </button>
-          {avyExpanded && (
-            <div className="mt-1.5 space-y-2">
-              {problems.map((p, i) => {
-                const locations = parseLocations(p.location);
-                return (
-                  <div key={i} className="flex items-center gap-2">
-                    <AspectElevationRose locations={locations} />
-                    <div className="flex-1">
-                      <p className="text-[10px] font-medium text-white">{p.name}</p>
-                      <p className="text-[9px] text-gray-400">
-                        {p.likelihood} &middot; D{p.size[0]}–D{p.size[1]}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="mt-1.5 border-t border-white/20 pt-1 text-[9px] text-gray-500">
-        &lt; 25° not shaded
-      </div>
-    </div>
-  );
+  return null;
 }

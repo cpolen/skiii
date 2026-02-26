@@ -45,9 +45,11 @@ interface OverviewTimelineProps {
   selectedHour: number | null;
   onSelectHour: (hour: number | null) => void;
   aggregatedFavorability?: Favorability[] | null;
+  /** Weather for the map center point — used for the temp/wind readout. */
+  locationForecast?: WeatherForecast | null;
 }
 
-export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, aggregatedFavorability }: OverviewTimelineProps) {
+export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, aggregatedFavorability, locationForecast }: OverviewTimelineProps) {
   const maxFt = metersToFeet(tour.max_elevation_m);
   const minFt = metersToFeet(tour.min_elevation_m);
 
@@ -257,7 +259,7 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
         {/* Scrollable bar strip with center indicator */}
         <div className="relative timeline-fade">
           {/* Center indicator with triangles */}
-          <div className={`pointer-events-none absolute -top-2 -bottom-2 left-1/2 z-10 -translate-x-1/2 flex flex-col items-center transition-opacity duration-300 ${committed ? 'opacity-100' : 'opacity-80'}`}>
+          <div className={`pointer-events-none absolute -top-2 -bottom-2 z-10 -translate-x-1/2 flex flex-col items-center transition-opacity duration-300 ${committed ? 'opacity-100' : 'opacity-80'}`} style={{ left: 3 * CELL_STRIDE + CELL_W / 2 }}>
             <div className="text-[10px] leading-none text-red-500">&#9660;</div>
             <div className="flex-1 w-[2px] bg-red-500 rounded-full shadow-[0_0_4px_rgba(239,68,68,0.5)]" />
             <div className="text-[10px] leading-none text-red-500">&#9650;</div>
@@ -269,15 +271,17 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
             className="flex gap-px overflow-x-auto scrollbar-hide"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', overscrollBehaviorX: 'contain' }}
           >
-            {/* Leading spacer so the first cell can be centered.
-               Accounts for the 1px flex gap between spacer and cell 0. */}
-            <div className="shrink-0" style={{ width: `calc(50% - ${CELL_W / 2 + CELL_GAP}px)` }} />
+            {/* Leading spacer — positions the anchor point 3 blocks from the left edge
+               so more future hours are visible. */}
+            <div className="shrink-0" style={{ width: 3 * CELL_STRIDE }} />
 
             {hours.map((h) => {
               const isPast = h.index < nowIndex;
               const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
               const isSelected = selectedHour === h.index;
               const isNow = h.index === nowIndex;
+
+              const isShort = !h.isDay || h.favorability === 'less';
 
               return (
                 <button
@@ -289,15 +293,16 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
                     const el = scrollRef.current;
                     if (el) el.scrollTo({ left: h.index * CELL_STRIDE, behavior: 'smooth' });
                   }}
-                  className={`relative shrink-0 ${isPast ? 'cursor-default' : ''}`}
+                  className={`relative shrink-0 flex items-center ${isPast ? 'cursor-default' : ''}`}
                   style={{ width: CELL_W, height: 28 }}
                   aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
                 >
                   <div
-                    className={`h-full rounded-[2px] ${
+                    className={`w-full rounded-[2px] ${
                       isSelected ? 'ring-1.5 ring-blue-500' : ''
                     }`}
                     style={{
+                      height: isShort ? 21 : 28,
                       backgroundColor: color,
                       opacity: isSelected ? 1 : isPast ? 0.4 : 0.65,
                     }}
@@ -353,7 +358,7 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
             </span>
           </div>
           {(() => {
-            const h = forecast.hourly[centerIndex];
+            const h = (locationForecast ?? forecast).hourly[centerIndex];
             if (!h) return null;
             const tempF = Math.round(celsiusToFahrenheit(h.temperature_2m));
             const windMph = Math.round(kmhToMph(h.wind_speed_80m));
@@ -381,20 +386,23 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
             const isSelected = selectedHour === h.index;
             const isNow = h.index === nowIndex;
 
+            const isShort = !h.isDay || h.favorability === 'less';
+
             return (
               <button
                 key={h.index}
                 onClick={() => { if (!isPast) onSelectHour(h.index); }}
-                className={`relative flex-1 transition-transform ${isPast ? 'cursor-default' : 'hover:scale-y-110'}`}
+                className={`relative flex-1 flex items-center transition-transform ${isPast ? 'cursor-default' : 'hover:scale-y-110'}`}
                 style={{ height: 24 }}
                 aria-label={`Select ${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
                 title={`${getDayLabel(h.time)} ${formatHourLabel(h.time)}`}
               >
                 <div
-                  className={`h-full w-full rounded-[1px] transition-all duration-150 ${
+                  className={`w-full rounded-[1px] transition-all duration-150 ${
                     isSelected ? 'scale-y-125 ring-2 ring-blue-500' : ''
                   }`}
                   style={{
+                    height: isShort ? 18 : 24,
                     backgroundColor: color,
                     opacity: isSelected ? 1 : isPast ? 0.5 : 0.6,
                   }}

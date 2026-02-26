@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
+import { isStyleReady } from '@/lib/mapStyle';
 
 /**
  * Tree canopy cover overlay using NLCD Tree Canopy Cover data (30m resolution).
@@ -46,7 +47,7 @@ export function TreeCoverOverlay({ map }: { map: mapboxgl.Map | null }) {
     if (!map) return;
 
     function apply() {
-      if (!map!.isStyleLoaded()) return;
+      if (!isStyleReady(map!)) return;
 
       if (!showTreeCover) {
         removeAll(map!);
@@ -84,47 +85,20 @@ export function TreeCoverOverlay({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('styledata', apply);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) { apply(); } else { retryTimer = setTimeout(tryApply, 50); }
     }
+    tryApply();
 
     return () => {
-      map.off('styledata', apply);
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       removeAll(map);
     };
   }, [map, showTreeCover]);
 
-  if (!showTreeCover) return null;
-
-  // Legend — matches the MRLC default green ramp
-  const ranges = [
-    { label: 'Sparse', color: 'rgba(200, 230, 190, 0.8)' },
-    { label: 'Light', color: 'rgba(140, 200, 120, 0.85)' },
-    { label: 'Dense', color: 'rgba(70, 150, 50, 0.9)' },
-    { label: 'Thick', color: 'rgba(30, 100, 20, 0.95)' },
-  ];
-
-  return (
-    <div className="rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
-      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-gray-300">
-        Tree Canopy Cover
-      </div>
-      <div className="flex gap-0.5">
-        {ranges.map((r) => (
-          <div key={r.label} className="flex flex-col items-center">
-            <div
-              className="h-3 w-6 rounded-sm"
-              style={{ background: r.color }}
-            />
-            <span className="mt-0.5 text-[8px] text-gray-400">{r.label}</span>
-          </div>
-        ))}
-      </div>
-      <div className="mt-1.5 border-t border-white/20 pt-1 text-[9px] text-gray-500">
-        NLCD 30m canopy density
-      </div>
-    </div>
-  );
+  return null;
 }

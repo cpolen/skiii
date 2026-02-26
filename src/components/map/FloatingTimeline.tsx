@@ -5,6 +5,7 @@ import { useMapStore } from '@/stores/map';
 import { tours } from '@/data/tours';
 import { useAllToursWeather } from '@/hooks/useAllToursWeather';
 import { useWeather } from '@/hooks/useWeather';
+import { useMapWeather } from '@/hooks/useMapWeather';
 import { OverviewTimeline } from '@/components/tour/OverviewTimeline';
 import { assessHour } from '@/lib/analysis/timing';
 import type { Favorability } from '@/lib/analysis/timing';
@@ -24,6 +25,9 @@ export function FloatingTimeline() {
   const selectedTour = selectedTourSlug
     ? tours.find((t) => t.slug === selectedTourSlug) ?? null
     : null;
+
+  // Weather for the map center point (dynamic to location dot)
+  const { data: mapWeather } = useMapWeather();
 
   // Batch weather for aggregated view
   const weatherQueries = useAllToursWeather();
@@ -83,6 +87,7 @@ export function FloatingTimeline() {
           selectedHour={selectedForecastHour}
           onSelectHour={setSelectedForecastHour}
           aggregatedFavorability={selectedTour ? null : aggregatedFavorability}
+          locationForecast={mapWeather}
         />
       </div>
     </div>

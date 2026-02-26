@@ -5,11 +5,11 @@ export const inclinePeak: Tour = {
   name: 'Incline Peak',
   description:
     'Incline Peak (9,549ft) rises from the Carson Range above Incline Village, accessed via ' +
-    'Incline Lake Road off Mt Rose Highway (SR 431). Also known as Rose Knob Junior, the tour ' +
-    'starts with a descent along Incline Lake Road to Incline Lake before skinning northwest ' +
-    'up the drainage and west along the upper ridge to the summit. The east-facing bowl visible ' +
-    'from the highway is the prize descent on low avalanche danger days. Multiple descent options ' +
-    'from mellow glades to steep chutes make this a versatile objective in the Mt Rose Wilderness.',
+    'Incline Lake Road off Mt Rose Highway (SR 431). The tour starts with a descent along ' +
+    'Incline Lake Road to Incline Lake before skinning northwest up the drainage and west along ' +
+    'the upper ridge to the summit. The east-facing bowl visible from the highway is the prize ' +
+    'descent on low avalanche danger days. Multiple descent options from mellow glades to steep ' +
+    'chutes make this a versatile objective in the Mt Rose Wilderness.',
   difficulty: 'intermediate',
   ates_rating: 'challenging',
   distance_km: 5.4,
@@ -54,43 +54,6 @@ export const inclinePeak: Tour = {
             [-119.9387, 39.2954],
             [-119.9393, 39.2949],
             [-119.9393, 39.2943],
-            [-119.9403, 39.2942],
-          ],
-        },
-      },
-    },
-    {
-      name: 'North Bowl (Bronco Chutes)',
-      slope_angle_max: 40,
-      slope_angle_avg: 30,
-      primary_aspects: ['N', 'NE'],
-      route: {
-        type: 'Feature',
-        properties: { name: 'North Bowl (Bronco Chutes)', difficulty: 'advanced' },
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            // Same approach: trailhead down Incline Lake Rd to lake
-            [-119.9225, 39.2920],
-            [-119.9252, 39.2924],
-            // Same ascent to upper drainage
-            [-119.9253, 39.2928],
-            [-119.9266, 39.2934],
-            [-119.9284, 39.2943],
-            [-119.9296, 39.2956],
-            [-119.9314, 39.2966],
-            [-119.9325, 39.2974],
-            [-119.9342, 39.2982],
-            [-119.9362, 39.2987],
-            // Continue west along northern ridge instead of turning south
-            [-119.9375, 39.2988],
-            [-119.9388, 39.2985],
-            [-119.9398, 39.2978],
-            [-119.9405, 39.2970],
-            [-119.9406, 39.2961],
-            [-119.9406, 39.2955],
-            [-119.9406, 39.2948],
-            // Summit from the north side
             [-119.9403, 39.2942],
           ],
         },

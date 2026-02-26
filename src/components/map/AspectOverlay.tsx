@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
-import { useAvyForecast } from '@/hooks/useAvyForecast';
-import { AspectElevationRose, parseLocations } from '@/components/tour/AvyDangerBanner';
+import { isStyleReady } from '@/lib/mapStyle';
 
 /**
  * Aspect overlay using four stacked hillshade layers, each illuminated from a
@@ -46,13 +45,12 @@ function removeAll(map: mapboxgl.Map) {
 
 export function AspectOverlay({ map }: { map: mapboxgl.Map | null }) {
   const showAspect = useMapStore((s) => s.showAspect);
-  const { data: avyData } = useAvyForecast();
 
   useEffect(() => {
     if (!map) return;
 
     function apply() {
-      if (!map!.isStyleLoaded()) return;
+      if (!isStyleReady(map!)) return;
 
       if (!showAspect) {
         removeAll(map!);
@@ -100,95 +98,20 @@ export function AspectOverlay({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('styledata', apply);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) { apply(); } else { retryTimer = setTimeout(tryApply, 50); }
     }
+    tryApply();
 
     return () => {
-      map.off('styledata', apply);
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       removeAll(map);
     };
   }, [map, showAspect]);
 
-  const [avyExpanded, setAvyExpanded] = useState(false);
-
-  // Legend
-  if (!showAspect) return null;
-
-  // Colors matching the layer config (0.8 opacity for legend)
-  const N_COLOR = 'rgba(234,179,8,0.85)';    // yellow
-  const E_COLOR = 'rgba(59,130,246,0.85)';   // blue
-  const S_COLOR = 'rgba(168,85,247,0.85)';   // purple
-  const W_COLOR = 'rgba(239,68,68,0.85)';    // red
-
-  const problems = avyData?.detailed?.problems ?? [];
-
-  return (
-    <div className="rounded-lg bg-gray-900/85 px-3 py-2.5 text-xs text-white shadow-lg backdrop-blur-sm">
-      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-gray-300">
-        Slope Aspect
-      </div>
-      {/* Compass rose with colored directional tips */}
-      <svg viewBox="0 0 100 100" width="90" height="90" className="mx-auto">
-        {/* N tip (up) */}
-        <polygon points="50,8 42,42 50,38 58,42" fill={N_COLOR} />
-        {/* S tip (down) */}
-        <polygon points="50,92 42,58 50,62 58,58" fill={S_COLOR} />
-        {/* E tip (right) */}
-        <polygon points="92,50 58,42 62,50 58,58" fill={E_COLOR} />
-        {/* W tip (left) */}
-        <polygon points="8,50 42,42 38,50 42,58" fill={W_COLOR} />
-        {/* Center dot */}
-        <circle cx="50" cy="50" r="3" fill="rgba(255,255,255,0.5)" />
-        {/* Cardinal labels */}
-        <text x="50" y="6" textAnchor="middle" fill={N_COLOR} fontSize="9" fontWeight="700">N</text>
-        <text x="50" y="99" textAnchor="middle" fill={S_COLOR} fontSize="9" fontWeight="700">S</text>
-        <text x="97" y="53" textAnchor="end" fill={E_COLOR} fontSize="9" fontWeight="700">E</text>
-        <text x="3" y="53" textAnchor="start" fill={W_COLOR} fontSize="9" fontWeight="700">W</text>
-      </svg>
-
-      {/* Avy problem roses — collapsible accordion */}
-      {problems.length > 0 && (
-        <div className="mt-2 border-t border-white/20 pt-2">
-          <button
-            onClick={() => setAvyExpanded((v) => !v)}
-            className="flex w-full items-center justify-between text-[10px] font-medium uppercase tracking-wider text-gray-300"
-          >
-            <span>Avy Problems ({problems.length})</span>
-            <svg
-              className={`h-3 w-3 text-gray-400 transition-transform duration-150 ${avyExpanded ? 'rotate-180' : ''}`}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-            </svg>
-          </button>
-          {avyExpanded && (
-            <div className="mt-1.5 space-y-2">
-              {problems.map((p, i) => {
-                const locations = parseLocations(p.location);
-                return (
-                  <div key={i} className="flex items-center gap-2">
-                    <AspectElevationRose locations={locations} />
-                    <div className="flex-1">
-                      <p className="text-[10px] font-medium text-white">{p.name}</p>
-                      <p className="text-[9px] text-gray-400">
-                        {p.likelihood} &middot; D{p.size[0]}–D{p.size[1]}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="mt-1 border-t border-white/20 pt-1 text-[9px] text-gray-500">
-        Flat terrain appears unshaded
-      </div>
-    </div>
-  );
+  return null;
 }

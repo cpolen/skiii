@@ -1,6 +1,6 @@
 import type { WeatherForecast, HourlyWeather } from '@/lib/types/conditions';
 import type { Tour, TourVariant } from '@/lib/types/tour';
-import { kmhToMph, celsiusToFahrenheit, getLoadedAspect } from '@/lib/types/conditions';
+import { kmhToMph, celsiusToFahrenheit, getLoadedAspect, windDegreesToCompass } from '@/lib/types/conditions';
 import { getSunPosition } from './solar';
 
 // ---------------------------------------------------------------------------
@@ -24,6 +24,8 @@ export interface SnowClassification {
   label: string;
   emoji: string;
   detail: string;
+  /** Rich narrative explaining the weather that created this condition */
+  explanation: string;
   /** Quality score 0-100 (powder and corn only) */
   score?: number;
   /** Confidence in the classification */
@@ -312,7 +314,7 @@ export function classifySnow(
   selectedHour?: number | null,
 ): SnowClassification {
   if (!forecast || forecast.hourly.length === 0) {
-    return { type: 'firm', label: 'Firm', emoji: '🏔️', detail: 'No forecast data' };
+    return { type: 'firm', label: 'Firm', emoji: '🏔️', detail: 'No forecast data', explanation: 'No forecast data available.' };
   }
 
   const hourly = forecast.hourly;
@@ -403,11 +405,25 @@ export function classifySnow(
       if (qualityNote) detailParts.push(qualityNote);
       else detailParts.push(`${tourTempF}°F`);
 
+      const snowfall12hInches = Math.round(snowfall12h / 2.54);
+      const windDir = windDegreesToCompass(currentHour.wind_direction_80m);
+      const loadedAspect = getLoadedAspect(currentHour.wind_direction_80m);
+      const isLoading = (aspects as string[]).includes(loadedAspect);
+      const explParts = [
+        `${snowfall48hInches}" of snow in the last 48 hours (${snowfall12hInches}" in the last 12h).`,
+        `Temperature at ${Math.round(tourMidElevFt).toLocaleString()}' is ${tourTempF}°F${tourTempF < 20 ? ', keeping the snow cold and dry' : tourTempF < 28 ? ', preserving snow quality' : ', near freezing'}.`,
+        `Ridge winds ${ridgeWindMph} mph from the ${windDir}.`,
+      ];
+      if (isLoading && ridgeWindMph >= 10) {
+        explParts.push(`Wind is loading snow onto ${loadedAspect}-facing slopes.`);
+      }
+
       return {
         type: 'powder',
         label,
         emoji: '❄️',
         detail: detailParts.join(' · '),
+        explanation: explParts.join(' '),
         score,
         confidence,
       };
@@ -420,30 +436,70 @@ export function classifySnow(
 
   // 3. Wind-affected check
   if (ridgeWindMph >= 25 && snowfall48h > 5) {
+    const windDir = windDegreesToCompass(currentHour.wind_direction_80m);
+    const loadedAspect = getLoadedAspect(currentHour.wind_direction_80m);
+    const scouringAspect = getLoadedAspect((currentHour.wind_direction_80m + 180) % 360);
     return {
       type: 'wind-affected',
       label: 'Wind-affected',
       emoji: '💨',
       detail: `Ridge ${ridgeWindMph} mph · recent snow wind-loaded`,
+      explanation: `Ridge winds are blowing ${ridgeWindMph} mph from the ${windDir}, redistributing ${snowfall48hInches}" of recent snow. Expect wind slab on ${loadedAspect}-facing slopes and scoured conditions on ${scouringAspect}-facing terrain. Temperature is ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'.`,
     };
   }
 
   // 4. Crust check
   if (hadRainOnSnow) {
+    // Compute rain details for explanation
+    let totalRainMm = 0;
+    let rainHours = 0;
+    let peakFreezingM = 0;
+    let minTempAfterRainC = Infinity;
+    let rainEnded = false;
+    for (const h of hourly) {
+      const t = new Date(h.time).getTime();
+      if (t > refMs) break;
+      if (t < h48ago) continue;
+      if (h.precipitation > 0 && h.freezing_level_height > tour.max_elevation_m) {
+        totalRainMm += h.precipitation;
+        rainHours++;
+        peakFreezingM = Math.max(peakFreezingM, h.freezing_level_height);
+        rainEnded = false;
+      } else if (totalRainMm > 0) {
+        rainEnded = true;
+      }
+      if (rainEnded) {
+        minTempAfterRainC = Math.min(minTempAfterRainC, h.temperature_2m);
+      }
+    }
+    const totalRainIn = Math.round(totalRainMm / 25.4 * 10) / 10;
+    const peakFreezingFt = Math.round(peakFreezingM * 3.28084).toLocaleString();
+    const minTempAfterF = minTempAfterRainC < Infinity ? Math.round(celsiusToFahrenheit(minTempAfterRainC)) : null;
+    const explParts = [
+      `${totalRainIn}" of rain fell over ${rainHours} hour${rainHours !== 1 ? 's' : ''} while the freezing level was above ${peakFreezingFt}', saturating the snowpack.`,
+    ];
+    if (minTempAfterF !== null && minTempAfterF < 32) {
+      explParts.push(`Temperatures then dropped to ${minTempAfterF}°F, forming a hard ice crust on the surface.`);
+    } else {
+      explParts.push(`Current temperature is ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'.`);
+    }
     return {
       type: 'crust',
       label: 'Crust',
       emoji: '🧊',
       detail: 'Rain-on-snow event',
+      explanation: explParts.join(' '),
     };
   }
   if (tempCrossings >= 4 && snowfall48h < 5) {
     // 4+ crossings means 2+ full melt-freeze cycles
+    const cycles = Math.floor(tempCrossings / 2);
     return {
       type: 'crust',
       label: 'Crust',
       emoji: '🧊',
       detail: 'Melt-freeze crust',
+      explanation: `${tempCrossings} temperature swings across freezing in the last 48 hours (${cycles} full melt-freeze cycles) with no significant new snow have created a hard crust. Current temperature is ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'.`,
     };
   }
 
@@ -454,6 +510,7 @@ export function classifySnow(
       label: 'Packed Powder',
       emoji: '🎿',
       detail: `${snowfall48hInches}" in 48h · ${tourTempF}°F`,
+      explanation: `${snowfall48hInches}" of snow fell in the last 48 hours but has settled below the powder threshold. Temperature is ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}' — firm but carveable. Ridge winds are ${ridgeWindMph} mph.`,
     };
   }
 
@@ -464,6 +521,7 @@ export function classifySnow(
       label: 'Variable',
       emoji: '🔀',
       detail: `Mixed freeze-thaw · ${tourTempF}°F`,
+      explanation: `${tempCrossings} freeze-thaw cycles in the last 48 hours with minimal new snow. Surface quality varies by aspect and elevation — sun-exposed slopes will be softer while shaded terrain stays firm. Currently ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'.`,
     };
   }
 
@@ -478,26 +536,32 @@ export function classifySnow(
       label: 'Firm → Powder',
       emoji: '🏔️',
       detail: `${incomingSnowIn}" incoming in 24h`,
+      explanation: `Currently firm with no significant recent snow, but ${incomingSnowIn}" of snowfall is forecast in the next 24 hours. Temperature is ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'.`,
     };
   }
 
   // 8. Wind-scoured — significant wind but no recent snow to load
   if (ridgeWindMph >= 20) {
+    const windDir = windDegreesToCompass(currentHour.wind_direction_80m);
     return {
       type: 'wind-scoured',
       label: 'Wind-scoured',
       emoji: '🏔️',
       detail: `Ridge ${ridgeWindMph} mph · ${tourTempF}°F`,
+      explanation: `Sustained ${ridgeWindMph} mph ridge winds from the ${windDir} with no significant recent snowfall have stripped soft snow from exposed terrain. Hard, icy surfaces likely on windward aspects. Currently ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'.`,
     };
   }
 
   // 9. Spring snow / softening — warm temps, above freezing, daytime
   if (tourTempF > 32 && currentHour.is_day) {
+    const snowDepthIn = Math.round(currentHour.snow_depth * 39.37);
+    const depthNote = snowDepthIn > 0 ? ` Snow depth is approximately ${snowDepthIn}".` : '';
     return {
       type: 'spring-snow',
       label: 'Spring Snow',
       emoji: '☀️',
       detail: `Soft · ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'`,
+      explanation: `Above freezing at ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'. The surface is soft and wet from solar warming.${depthNote} Best to ski early before the snow becomes heavy and sticky. Ridge winds are ${ridgeWindMph} mph.`,
     };
   }
 
@@ -507,6 +571,7 @@ export function classifySnow(
       label: 'Softening',
       emoji: '🌤️',
       detail: `${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'`,
+      explanation: `Temperatures approaching freezing at ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'. The surface is losing its firmness but hasn't entered a full corn cycle — overnight refreeze may have been insufficient or the melt-freeze pattern isn't established yet. Ridge winds are ${ridgeWindMph} mph.`,
     };
   }
 
@@ -516,6 +581,7 @@ export function classifySnow(
     label: 'Firm',
     emoji: '🏔️',
     detail: `Hard-packed · ${tourTempF}°F at ${Math.round(tourMidElevFt).toLocaleString()}'`,
+    explanation: `No significant recent snowfall and cold at ${tourTempF}°F. Hard-packed surface at ${Math.round(tourMidElevFt).toLocaleString()}'. Ridge winds are ${ridgeWindMph} mph.`,
   };
 }
 
@@ -630,11 +696,29 @@ function checkCorn(
   const detailParts = [`${cornStartLabel}–${cornEndLabel} on ${aspectStr}`];
   detailParts.push(`Leave by ${startByLabel}`);
 
+  const minTempF = Math.round(celsiusToFahrenheit(freezeStats.minTempC));
+  const cloudDesc = avgCloud < 20 ? 'clear' : avgCloud < 50 ? 'mostly clear' : avgCloud < 80 ? 'partly cloudy' : 'cloudy';
+  const snowDepthIn = Math.round(snowDepthM * 39.37);
+  const explParts = [
+    `Overnight temperatures dropped to ${minTempF}°F with ${freezeStats.freezeHours} hours below freezing under ${cloudDesc} skies.`,
+  ];
+  if (meltFreezeDays >= 2) {
+    explParts.push(`${meltFreezeDays} consecutive days of melt-freeze cycling have established a corn surface.`);
+  } else {
+    explParts.push(`Melt-freeze cycle is developing.`);
+  }
+  explParts.push(`Solar radiation will soften ${aspectStr}-facing aspects between ${cornStartLabel}–${cornEndLabel}.`);
+  if (snowDepthIn > 0) {
+    explParts.push(`Snow depth is approximately ${snowDepthIn}".`);
+  }
+  explParts.push(`Ridge winds are ${ridgeWindMph} mph.`);
+
   return {
     type: 'corn',
     label,
     emoji: '🌽',
     detail: detailParts.join(' · '),
+    explanation: explParts.join(' '),
     score,
     confidence,
     cornWindowStart: cornStartTime.toISOString(),

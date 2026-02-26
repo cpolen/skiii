@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { useMapStore } from '@/stores/map';
+import { isStyleReady } from '@/lib/mapStyle';
 import { tours } from '@/data/tours';
 
 /**
@@ -72,7 +73,9 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
     if (!map) return;
 
     function apply() {
-      if (!map!.isStyleLoaded()) return;
+      // We only need the style definition to be parsed — not all tiles loaded.
+      // getStyle() returns undefined when the style hasn't loaded yet.
+      if (!isStyleReady(map!)) return;
 
       removeAll(map!);
 
@@ -215,20 +218,28 @@ export function TourRoute({ map }: { map: mapboxgl.Map | null }) {
       }
     }
 
-    // Apply immediately if style is loaded, otherwise wait for next styledata.
-    // NOTE: uses 'styledata' (not 'load') because 'load' only fires once during
-    // map init. If this effect re-runs after the map already loaded and
-    // isStyleLoaded() is temporarily false (e.g. during tile/terrain loading),
-    // 'load' would never fire again, leaving the route un-drawn.
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('styledata', apply);
+    // Apply immediately if style definition is parsed, otherwise poll.
+    // We check getStyle() (style definition ready) instead of isStyleLoaded()
+    // (all tiles loaded) because sources/layers can be added as soon as the
+    // style is parsed — we don't need to wait for every tile to finish loading.
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    function tryApply() {
+      if (cancelled) return;
+      if (isStyleReady(map!)) {
+        apply();
+      } else {
+        retryTimer = setTimeout(tryApply, 50);
+      }
     }
 
+    tryApply();
+
     return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       try {
-        map.off('styledata', apply);
         removeAll(map);
       } catch {
         // Map may already be removed during page navigation
