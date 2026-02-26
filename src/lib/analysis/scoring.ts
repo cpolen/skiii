@@ -47,7 +47,7 @@ const BANDS: { min: number; band: ConditionsBand; label: string; color: string }
   { min: 0, band: 'serious', label: 'Serious concern', color: '#991B1B' },
 ];
 
-function getBand(score: number): { band: ConditionsBand; label: string; color: string } {
+export function getBand(score: number): { band: ConditionsBand; label: string; color: string } {
   for (const b of BANDS) {
     if (score >= b.min) return { band: b.band, label: b.label, color: b.color };
   }
@@ -184,7 +184,7 @@ export function scoreAvalanche(
 // ---------------------------------------------------------------------------
 
 /** Map assessHour() integer score to 0-100 range. */
-function hourScoreTo100(score: number): number {
+export function hourScoreTo100(score: number): number {
   if (score >= 3) return 100;
   if (score === 2) return 85;
   if (score === 1) return 70;
@@ -199,7 +199,7 @@ function hourScoreTo100(score: number): number {
  * Compute a raw integer score for an hour (same logic as assessHour but returns the number).
  * This avoids modifying the existing assessHour() function.
  */
-function rawHourScore(
+export function rawHourScore(
   hour: WeatherForecast['hourly'][number],
   tourMaxFt: number,
   tourMinFt: number,
@@ -264,7 +264,13 @@ export function scoreWeather(
     }
   }
 
-  // Average across the tour duration window
+  // Average across the tour duration window, stopping at sunset.
+  // Nighttime hours (rawHourScore = -5) shouldn't drag down the weather
+  // score for a tour starting during daylight — the user won't be touring
+  // after dark. Without this cap, a later afternoon start gets a *worse*
+  // Wx score than an earlier one solely because its window extends further
+  // into darkness, creating a paradox where the timeline block is green
+  // (great single-hour weather) but the composite score drops.
   const end = Math.min(startHour + tourDuration - 1, forecast.hourly.length - 1);
   let totalScore = 0;
   let count = 0;
@@ -272,6 +278,9 @@ export function scoreWeather(
   for (let i = startHour; i <= end; i++) {
     const h = forecast.hourly[i];
     if (!h) continue;
+    // Stop averaging after sunset — only penalize the start hour itself
+    // if it's nighttime (so nighttime selections still show poor scores).
+    if (!h.is_day && i > startHour) break;
     const result = assessHour(h, tourMaxFt, tourMinFt);
     totalScore += rawHourScore(h, tourMaxFt, tourMinFt);
     count++;

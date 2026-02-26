@@ -6,6 +6,7 @@ import { metersToFeet, celsiusToFahrenheit, kmhToMph } from '@/lib/types/conditi
 import type { Tour } from '@/lib/types/tour';
 import { assessHour } from '@/lib/analysis/timing';
 import type { Favorability } from '@/lib/analysis/timing';
+import { getBand } from '@/lib/analysis/scoring';
 
 const FAV_COLORS = {
   more: '#16A34A',
@@ -45,25 +46,42 @@ interface OverviewTimelineProps {
   selectedHour: number | null;
   onSelectHour: (hour: number | null) => void;
   aggregatedFavorability?: Favorability[] | null;
+  /** Per-hour composite scores (0-100) — when provided, block colors use the
+   *  composite band scale instead of weather-only favorability so the timeline
+   *  and score gauge always agree. */
+  hourlyCompositeScores?: number[] | null;
   /** Weather for the map center point — used for the temp/wind readout. */
   locationForecast?: WeatherForecast | null;
 }
 
-export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, aggregatedFavorability, locationForecast }: OverviewTimelineProps) {
+export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, aggregatedFavorability, hourlyCompositeScores, locationForecast }: OverviewTimelineProps) {
   const maxFt = metersToFeet(tour.max_elevation_m);
   const minFt = metersToFeet(tour.min_elevation_m);
 
   const hours = useMemo(() => {
     return forecast.hourly.map((h, i) => {
       const favorability = aggregatedFavorability?.[i] ?? assessHour(h, maxFt, minFt).favorability;
+      // When composite scores are available, derive color from the composite band
+      // so timeline blocks and the score gauge always agree.
+      const compositeScore = hourlyCompositeScores?.[i] ?? null;
+      let color: string;
+      if (!h.is_day) {
+        color = FAV_COLORS.night;
+      } else if (compositeScore != null) {
+        color = getBand(compositeScore).color;
+      } else {
+        color = FAV_COLORS[favorability];
+      }
       return {
         index: i,
         favorability,
+        compositeScore,
+        color,
         isDay: h.is_day,
         time: h.time,
       };
     });
-  }, [forecast.hourly, maxFt, minFt, aggregatedFavorability]);
+  }, [forecast.hourly, maxFt, minFt, aggregatedFavorability, hourlyCompositeScores]);
 
   // Find "now" index — closest hour to current time
   const nowIndex = useMemo(() => {
@@ -99,13 +117,19 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
     ? `${getDayLabel(hours[selectedHour].time)} ${formatHourLabel(hours[selectedHour].time)}`
     : null;
 
-  // Next favorable daytime window at or after now
+  // Next favorable daytime window at or after now.
+  // When composite scores are available, "favorable" = composite >= 80 (green band).
+  // Otherwise fall back to weather-only favorability === 'more'.
+  const isFavorable = useCallback((h: typeof hours[number]) => {
+    if (!h.isDay) return false;
+    return h.compositeScore != null ? h.compositeScore >= 80 : h.favorability === 'more';
+  }, []);
   const nextWindow = useMemo(() => {
     let i = nowIndex;
     while (i < hours.length) {
-      if (hours[i].isDay && hours[i].favorability === 'more') {
+      if (isFavorable(hours[i])) {
         const start = i;
-        while (i < hours.length && hours[i].isDay && hours[i].favorability === 'more') i++;
+        while (i < hours.length && isFavorable(hours[i])) i++;
         const len = i - start;
         if (len >= 2) {
           const startLabel = `${getDayLabel(hours[start].time)} ${formatHourLabel(hours[start].time)}`;
@@ -277,11 +301,11 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
 
             {hours.map((h) => {
               const isPast = h.index < nowIndex;
-              const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
+              const color = isPast ? '#6B7280' : h.color;
               const isSelected = selectedHour === h.index;
               const isNow = h.index === nowIndex;
 
-              const isShort = !h.isDay || h.favorability === 'less';
+              const isShort = !h.isDay || (h.compositeScore != null ? h.compositeScore < 40 : h.favorability === 'less');
 
               return (
                 <button
@@ -382,11 +406,11 @@ export function OverviewTimeline({ forecast, tour, selectedHour, onSelectHour, a
         <div className="flex gap-px">
           {hours.map((h) => {
             const isPast = h.index < nowIndex;
-            const color = isPast ? '#6B7280' : h.isDay ? FAV_COLORS[h.favorability] : FAV_COLORS.night;
+            const color = isPast ? '#6B7280' : h.color;
             const isSelected = selectedHour === h.index;
             const isNow = h.index === nowIndex;
 
-            const isShort = !h.isDay || h.favorability === 'less';
+            const isShort = !h.isDay || (h.compositeScore != null ? h.compositeScore < 40 : h.favorability === 'less');
 
             return (
               <button

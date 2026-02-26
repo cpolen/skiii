@@ -9,7 +9,7 @@ import type { WeatherForecast } from '@/lib/types/conditions';
 import { analyzeTiming, assessHour } from '@/lib/analysis/timing';
 import { useMapStore } from '@/stores/map';
 import { useAvyForecast } from '@/hooks/useAvyForecast';
-import { assessConditions } from '@/lib/analysis/scoring';
+import { assessConditions, rawHourScore, hourScoreTo100, scoreAvalanche, scoreTerrain, resolveAvyDay } from '@/lib/analysis/scoring';
 import { WeatherSummary } from './WeatherSummary';
 import { AvyDangerBanner } from './AvyDangerBanner';
 import { OverviewTimeline } from './OverviewTimeline';
@@ -45,7 +45,7 @@ export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTime
   const router = useRouter();
   const { data: forecast, isLoading: weatherLoading } = useWeather(tour);
   const { data: mapWeather } = useMapWeather();
-  const { data: avyData } = useAvyForecast();
+  const { data: avyData, isLoading: avyLoading } = useAvyForecast();
   const selectedHour = useMapStore((s) => s.selectedForecastHour);
   const setSelectedHour = useMapStore((s) => s.setSelectedForecastHour);
   const selectedVariantIndex = useMapStore((s) => s.selectedVariantIndex);
@@ -71,6 +71,27 @@ export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTime
     const { windows } = analyzeTiming(forecast, tour);
     return windows;
   }, [forecast, tour]);
+
+  // Per-hour composite scores so the sidebar timeline colors match the score gauge.
+  // Wait for avy data to finish loading to avoid a green→yellow flash.
+  const hourlyCompositeScores = useMemo(() => {
+    if (!forecast || avyLoading) return null;
+    const tourMaxFt = metersToFeet(tour.max_elevation_m);
+    const tourMinFt = metersToFeet(tour.min_elevation_m);
+    const zone = avyData?.zones?.[0] ?? null;
+    const detailed = avyData?.detailed ?? null;
+    const { score: terrainScore } = scoreTerrain(tour, variant);
+
+    return forecast.hourly.map((h) => {
+      const wxScore = hourScoreTo100(rawHourScore(h, tourMaxFt, tourMinFt));
+      const avyDay = resolveAvyDay(h.time, detailed);
+      const avyScore = scoreAvalanche(detailed, zone, tour, variant, avyDay);
+      if (avyScore != null) {
+        return Math.round(avyScore * 0.50 + wxScore * 0.35 + terrainScore * 0.15);
+      }
+      return Math.round(wxScore * 0.70 + terrainScore * 0.30);
+    });
+  }, [forecast, avyData, avyLoading, tour, variant]);
 
   return (
     <div className="pb-4">
@@ -254,6 +275,7 @@ export function SidebarConditions({ tour, hideTimeline }: { tour: Tour; hideTime
               tour={tour}
               selectedHour={selectedHour}
               onSelectHour={setSelectedHour}
+              hourlyCompositeScores={hourlyCompositeScores}
               locationForecast={mapWeather}
             />
           </div>

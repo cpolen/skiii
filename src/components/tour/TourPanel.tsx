@@ -10,7 +10,7 @@ import { tours } from '@/data/tours';
 import { useAllToursWeather } from '@/hooks/useAllToursWeather';
 import { useMapWeather } from '@/hooks/useMapWeather';
 import { useAvyForecast } from '@/hooks/useAvyForecast';
-import { assessConditions } from '@/lib/analysis/scoring';
+import { assessConditions, rawHourScore, hourScoreTo100, scoreAvalanche, scoreTerrain, resolveAvyDay } from '@/lib/analysis/scoring';
 import { classifySnow } from '@/lib/analysis/snow-type';
 import { assessHour } from '@/lib/analysis/timing';
 import type { Favorability } from '@/lib/analysis/timing';
@@ -36,6 +36,7 @@ export function TourPanel() {
   const conditionFilter = useMapStore((s) => s.conditionFilter);
   const setConditionFilter = useMapStore((s) => s.setConditionFilter);
   const setFilteredTourSlugs = useMapStore((s) => s.setFilteredTourSlugs);
+  const selectedVariantIndex = useMapStore((s) => s.selectedVariantIndex);
   const [searchQuery, setSearchQuery] = useState('');
   const [diffFilter, setDiffFilter] = useState<string | null>(null);
 
@@ -62,7 +63,7 @@ export function TourPanel() {
   // Batch-fetch weather for all tours (cache-shared with per-tour useWeather)
   const weatherQueries = useAllToursWeather();
   const { data: mapWeather } = useMapWeather();
-  const { data: avyData, isFetching: avyFetching } = useAvyForecast();
+  const { data: avyData, isFetching: avyFetching, isLoading: avyLoading } = useAvyForecast();
   const setLayerLoading = useMapStore((s) => s.setLayerLoading);
 
   // Expose weather + avy loading to the global layerLoading store
@@ -225,6 +226,28 @@ export function TourPanel() {
   const selectedTourForecast = selectedTourIdx >= 0
     ? (weatherQueries[selectedTourIdx]?.data as WeatherForecast | undefined) ?? null
     : null;
+
+  // Per-hour composite scores for the mobile timeline when a tour is selected.
+  // Waits for avy data to finish loading to avoid a green→yellow flash.
+  const mobileHourlyCompositeScores = useMemo(() => {
+    if (!selectedTour || !selectedTourForecast || avyLoading) return null;
+    const variant = selectedTour.variants[selectedVariantIndex] ?? selectedTour.variants[0];
+    const tourMaxFt = metersToFeet(selectedTour.max_elevation_m);
+    const tourMinFt = metersToFeet(selectedTour.min_elevation_m);
+    const zone = avyData?.zones?.[0] ?? null;
+    const detailed = avyData?.detailed ?? null;
+    const { score: terrainScore } = scoreTerrain(selectedTour, variant);
+
+    return selectedTourForecast.hourly.map((h) => {
+      const wxScore = hourScoreTo100(rawHourScore(h, tourMaxFt, tourMinFt));
+      const avyDay = resolveAvyDay(h.time, detailed);
+      const avyScore = scoreAvalanche(detailed, zone, selectedTour, variant, avyDay);
+      if (avyScore != null) {
+        return Math.round(avyScore * 0.50 + wxScore * 0.35 + terrainScore * 0.15);
+      }
+      return Math.round(wxScore * 0.70 + terrainScore * 0.30);
+    });
+  }, [selectedTour, selectedTourForecast, selectedVariantIndex, avyData, avyLoading]);
 
   // Scan all tours × future hours for first corn / powder window
   // Past data is used by classifySnow for lookback (48h snowfall, overnight refreeze, etc.)
@@ -457,6 +480,7 @@ export function TourPanel() {
         onGoToCorn={handleGoToCorn}
         onGoToPowder={handleGoToPowder}
         aggregatedFavorability={aggregatedFavorability}
+        hourlyCompositeScores={mobileHourlyCompositeScores}
         tourNextWindows={tourNextWindows}
         tourFavorableForDay={tourFavorableForDay}
         notFavorableLabel={notFavorableLabel}
@@ -496,6 +520,7 @@ function MobileBottomSheet({
   onGoToCorn,
   onGoToPowder,
   aggregatedFavorability,
+  hourlyCompositeScores,
   tourNextWindows,
   tourFavorableForDay,
   notFavorableLabel,
@@ -523,6 +548,7 @@ function MobileBottomSheet({
   onGoToCorn: () => void;
   onGoToPowder: () => void;
   aggregatedFavorability: Favorability[] | null;
+  hourlyCompositeScores: number[] | null;
   tourNextWindows: ({ startTime: string; endTime: string } | null)[];
   tourFavorableForDay: boolean[];
   notFavorableLabel: string;
@@ -716,11 +742,17 @@ function MobileBottomSheet({
 
       {/* Timeline footer — always visible, sticky at bottom */}
       {(() => {
-        const timelineForecast = (selectedTour ? selectedTourForecast : null) ?? repForecast;
+        // When a tour is selected, don't fall back to repForecast — wait for
+        // the selected tour's own forecast so we never show wrong-tour data.
+        const timelineForecast = selectedTour
+          ? selectedTourForecast
+          : repForecast;
         const timelineTour = selectedTour ?? repTour;
+        // Show shimmer when tour selected but composite scores aren't ready
+        const showShimmer = !timelineForecast || (selectedTour && !hourlyCompositeScores);
         return (
           <div className="mx-2 mb-2 rounded-xl bg-white shadow-lg ring-1 ring-gray-200" data-tour-step="timeline-mobile">
-            {timelineForecast ? (
+            {!showShimmer ? (
               <div className="px-1 py-2">
                 <OverviewTimeline
                   forecast={timelineForecast}
@@ -728,6 +760,7 @@ function MobileBottomSheet({
                   selectedHour={selectedForecastHour}
                   onSelectHour={onSelectHour}
                   aggregatedFavorability={selectedTour ? null : aggregatedFavorability}
+                  hourlyCompositeScores={hourlyCompositeScores}
                   locationForecast={locationForecast}
                 />
               </div>
